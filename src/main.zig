@@ -80,3 +80,28 @@ pub const ObjectType = enum {
     commit,
     tree,
 };
+
+pub const IndexHeader = struct {
+    signature: [4]u8,
+    version: u32,
+    entries: u32,
+};
+
+pub const IndexEntry = struct {
+    ctime_s: u32,
+    ctime_n: u32,
+    mtime_s: u32,
+    mtime_n: u32,
+    dev: u32,
+    ino: u32,
+    mode: u32,
+    obj_type: u4,
+    unused: u3,
+    unix_permissions: u9,
+    uid: u32,
+    gid: u32,
+    file_size: u32,
+    hash: [20]u8,
+    flags: u16,
+    path: []const u8,
+};
