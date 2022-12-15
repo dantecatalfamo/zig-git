@@ -18,7 +18,7 @@ pub fn main() !void {
     try initialize(allocator, path.?);
     std.debug.print("initialized empty repository {s}\n", .{ path.? });
     try os.chdir(path.?);
-    try save_object(allocator, "test", .blob);
+    try saveObject(allocator, "test", .blob);
 }
 
 pub fn initialize(allocator: mem.Allocator, repo_path: []const u8) !void {
@@ -44,7 +44,7 @@ pub fn initializeBare(allocator: mem.Allocator, repo_path: []const u8) !void {
     defer head.close();
 }
 
-pub fn hash_object(data: []const u8, obj_type: ObjectType, digest: *[20]u8) void {
+pub fn hashObject(data: []const u8, obj_type: ObjectType, digest: *[20]u8) void {
     var hash = std.crypto.hash.Sha1.init(.{});
     const writer = hash.writer();
     try writer.print("{s} {d}\x00", .{ @tagName(obj_type), data.len });
@@ -52,9 +52,9 @@ pub fn hash_object(data: []const u8, obj_type: ObjectType, digest: *[20]u8) void
     hash.final(digest);
 }
 
-pub fn save_object(allocator: mem.Allocator, data: []const u8, obj_type: ObjectType) !void {
+pub fn saveObject(allocator: mem.Allocator, data: []const u8, obj_type: ObjectType) !void {
     var digest: [20]u8 = undefined;
-    hash_object(data, obj_type, &digest);
+    hashObject(data, obj_type, &digest);
 
     const hex_digest = try std.fmt.allocPrint(allocator, "{s}", .{ std.fmt.fmtSliceHexLower(&digest) });
     defer allocator.free(hex_digest);
