@@ -1,5 +1,5 @@
 //
-// Decompressor for ZLIB data streams (RFC1950)
+// Compressor for ZLIB data streams (RFC1950)
 
 const std = @import("std");
 const io = std.io;
