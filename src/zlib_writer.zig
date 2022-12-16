@@ -37,9 +37,9 @@ pub fn ZlibStreamWriter(comptime WriterType: type) type {
             const CINFO: u4 = 7;
             const CMF: u8 = (@as(u8, CINFO) << 4) | CM;
 
-            const FCHECK: u5 = 28;
-            const FDICT: u1 = 0;
             const FLEVEL: u2 = @enumToInt(options.level);
+            const FDICT: u1 = 0;
+            const FCHECK: u5 = 28;
             const FLG = (@as(u8, FLEVEL) << 6) | (@as(u8, FDICT) << 5) | FCHECK;
 
             const compression_level: deflate.Compression = switch (options.level) {
