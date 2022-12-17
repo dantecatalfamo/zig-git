@@ -19,22 +19,16 @@ pub fn main() !void {
         for (index.entries) |entry| {
             std.debug.print(
                 \\Entry:
-                    \\ Mode: {o}
-                    \\ Type: {}
+                    \\ Mode: {}
                     \\ Hash: {s}
                     \\ Size: {d}
-                    \\ Unix: {o}
-                    \\ Unsd: {d}
                     \\ Path: {s}
                     \\
                     ,
                 .{
                     entry.mode,
-                    entry.object_type,
                     std.fmt.fmtSliceHexLower(&entry.object_name),
                     entry.file_size,
-                    entry.unix_permissions,
-                    entry.unused,
                     entry.path
             });
             std.debug.print("{}\n", .{ entry });
@@ -153,11 +147,11 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
         const mtime_n = try index_reader.readIntBig(u32);
         const dev = try index_reader.readIntBig(u32);
         const ino = try index_reader.readIntBig(u32);
-        const mode = try index_reader.readIntBig(u32);
+        const mode = @bitCast(Index.Mode, try index_reader.readIntBig(u32));
 
-        const object_type = @truncate(u4, mode >> 12);
-        const unused = @truncate(u3, mode >> 9);
-        const unix_permissions = @truncate(u9, mode);
+        // const object_type = @truncate(u4, mode >> 12);
+        // const unused = @truncate(u3, mode >> 9);
+        // const unix_permissions = @truncate(u9, mode);
 
         const uid = try index_reader.readIntBig(u32);
         const gid = try index_reader.readIntBig(u32);
@@ -195,9 +189,9 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
             .dev = dev,
             .ino = ino,
             .mode = mode,
-            .object_type = @intToEnum(Index.EntryType, object_type),
-            .unused = unused,
-            .unix_permissions = unix_permissions,
+            // .object_type = @intToEnum(Index.EntryType, object_type),
+            // .unused = unused,
+            // .unix_permissions = unix_permissions,
             .uid = uid,
             .gid = gid,
             .file_size = file_size,
@@ -246,10 +240,7 @@ pub const Index = struct {
         mtime_n: u32,
         dev: u32,
         ino: u32,
-        mode: u32,
-        object_type: EntryType,
-        unused: u3,
-        unix_permissions: u9,
+        mode: Mode,
         uid: u32,
         gid: u32,
         file_size: u32,
@@ -257,6 +248,13 @@ pub const Index = struct {
         flags: Flags,
         extended_flags: ?ExtendedFlags, // v3+ and extended only
         path: []const u8,
+    };
+
+    pub const Mode = packed struct (u32) {
+        unix_permissions: u9,
+        unused: u3,
+        object_type: EntryType,
+        padding: u16 = 0,
     };
 
     pub const EntryType = enum(u4) {
