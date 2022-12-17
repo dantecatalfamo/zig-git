@@ -19,14 +19,14 @@ pub fn main() !void {
         for (index.entries) |entry| {
             std.debug.print(
                 \\Entry:
-                    \\ Mode: {}
+                    \\ Mode: {o}
                     \\ Hash: {s}
                     \\ Size: {d}
                     \\ Path: {s}
                     \\
                     ,
                 .{
-                    entry.mode,
+                    @bitCast(u32, entry.mode),
                     std.fmt.fmtSliceHexLower(&entry.object_name),
                     entry.file_size,
                     entry.path
@@ -148,11 +148,6 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
         const dev = try index_reader.readIntBig(u32);
         const ino = try index_reader.readIntBig(u32);
         const mode = @bitCast(Index.Mode, try index_reader.readIntBig(u32));
-
-        // const object_type = @truncate(u4, mode >> 12);
-        // const unused = @truncate(u3, mode >> 9);
-        // const unix_permissions = @truncate(u9, mode);
-
         const uid = try index_reader.readIntBig(u32);
         const gid = try index_reader.readIntBig(u32);
         const file_size = try index_reader.readIntBig(u32);
@@ -189,9 +184,6 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
             .dev = dev,
             .ino = ino,
             .mode = mode,
-            // .object_type = @intToEnum(Index.EntryType, object_type),
-            // .unused = unused,
-            // .unix_permissions = unix_permissions,
             .uid = uid,
             .gid = gid,
             .file_size = file_size,
