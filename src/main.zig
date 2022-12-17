@@ -114,8 +114,10 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
     defer allocator.free(index_data);
     var index_hash: [20]u8 = undefined;
     std.crypto.hash.Sha1.hash(index_data[0..index_data.len-20], &index_hash, .{});
-    if (mem.eql(u8, &index_hash, index_data[index_data.len-20..])) {
-        // return error.InvalidIndexSignature;
+    const index_signature = index_data[index_data.len-20..];
+
+    if (!mem.eql(u8, &index_hash, index_signature)) {
+        return error.InvalidIndexSignature;
     }
 
     var index_buffer = std.io.fixedBufferStream(index_data[0..index_data.len-20]);
