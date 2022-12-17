@@ -15,11 +15,31 @@ pub fn main() !void {
     if (maybe_path == null) {
         std.debug.print("No path privided\n", .{});
         const index = try readIndex(allocator, ".");
+        std.debug.print("Signature: {s}\nNum Entries: {d}\nVersion: {d}\n", .{ index.header.signature, index.header.entries, index.header.version });
         for (index.entries) |entry| {
+            std.debug.print(
+                \\Entry:
+                    \\ Mode: {o}
+                    \\ Type: {}
+                    \\ Hash: {s}
+                    \\ Size: {d}
+                    \\ Unix: {o}
+                    \\ Unsd: {d}
+                    \\ Path: {s}
+                    \\
+                    ,
+                .{
+                    entry.mode,
+                    entry.object_type,
+                    std.fmt.fmtSliceHexLower(&entry.object_name),
+                    entry.file_size,
+                    entry.unix_permissions,
+                    entry.unused,
+                    entry.path
+            });
             std.debug.print("{}\n", .{ entry });
         }
         defer index.deinit();
-        std.debug.print("{}\n", .{ index });
         return;
     }
     const path = maybe_path.?;
@@ -125,6 +145,8 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
 
     var idx: usize = 0;
     while (idx < header.entries) : (idx += 1) {
+        const entry_begin_pos = index_buffer.pos;
+
         const ctime_s = try index_reader.readIntBig(u32);
         const ctime_n = try index_reader.readIntBig(u32);
         const mtime_s = try index_reader.readIntBig(u32);
@@ -133,10 +155,9 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
         const ino = try index_reader.readIntBig(u32);
         const mode = try index_reader.readIntBig(u32);
 
-        const middle_bytes = try index_reader.readIntBig(u16);
-        const object_type = @truncate(u4, middle_bytes >> 12);
-        const unused = @truncate(u3, middle_bytes >> 9);
-        const unix_permissions = @truncate(u9, middle_bytes);
+        const object_type = @truncate(u4, mode >> 12);
+        const unused = @truncate(u3, mode >> 9);
+        const unix_permissions = @truncate(u9, mode);
 
         const uid = try index_reader.readIntBig(u32);
         const gid = try index_reader.readIntBig(u32);
@@ -154,8 +175,12 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
         };
 
         const path = try index_reader.readUntilDelimiterAlloc(allocator, 0, std.math.maxInt(usize));
+
+        const entry_end_pos = index_buffer.pos;
+        const entry_size = entry_end_pos - entry_begin_pos;
+
         if (header.version < 4) {
-            const extra_zeroes = (8 - (index_buffer.pos % 8)) % 8;
+            const extra_zeroes = (8 - (entry_size % 8)) % 8;
             var extra_zero_idx: usize = 0;
             while (extra_zero_idx < extra_zeroes) : (extra_zero_idx += 1) {
                 _ = try index_reader.readByte();
@@ -170,7 +195,7 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
             .dev = dev,
             .ino = ino,
             .mode = mode,
-            .object_type = object_type,
+            .object_type = @intToEnum(Index.EntryType, object_type),
             .unused = unused,
             .unix_permissions = unix_permissions,
             .uid = uid,
@@ -222,7 +247,7 @@ pub const Index = struct {
         dev: u32,
         ino: u32,
         mode: u32,
-        object_type: u4,
+        object_type: EntryType,
         unused: u3,
         unix_permissions: u9,
         uid: u32,
@@ -232,6 +257,12 @@ pub const Index = struct {
         flags: Flags,
         extended_flags: ?ExtendedFlags, // v3+ and extended only
         path: []const u8,
+    };
+
+    pub const EntryType = enum(u4) {
+        regular_file = 0b1000,
+        symbolic_link = 0b1010,
+        gitlink = 0b1110,
     };
 
     pub const Flags = packed struct(u16) {
