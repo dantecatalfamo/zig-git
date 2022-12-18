@@ -42,7 +42,10 @@ pub fn main() !void {
     try os.chdir(path);
     const git_dir_path = try fs.path.join(allocator, &.{ path, ".git" });
     defer allocator.free(git_dir_path);
-    try saveObject(allocator, git_dir_path, "test", .blob);
+    const hash = try saveObject(allocator, git_dir_path, "test\n", .blob);
+    std.debug.print("Hash: {x}\n", .{ std.fmt.fmtSliceHexLower(&hash) });
+    const obj_header = try loadObject(allocator, git_dir_path, &hash, std.io.getStdOut().writer());
+    std.debug.print("{}\n", .{ obj_header });
 }
 
 pub fn initialize(allocator: mem.Allocator, repo_path: []const u8) !void {
@@ -76,7 +79,7 @@ pub fn hashObject(data: []const u8, obj_type: ObjectType, digest: *[20]u8) void 
     hash.final(digest);
 }
 
-pub fn saveObject(allocator: mem.Allocator, git_dir_path: []const u8, data: []const u8, obj_type: ObjectType) !void {
+pub fn saveObject(allocator: mem.Allocator, git_dir_path: []const u8, data: []const u8, obj_type: ObjectType) ![20]u8 {
     var digest: [20]u8 = undefined;
     hashObject(data, obj_type, &digest);
 
@@ -97,7 +100,48 @@ pub fn saveObject(allocator: mem.Allocator, git_dir_path: []const u8, data: []co
     try writer.print("{s} {d}\x00", .{ @tagName(obj_type), data.len });
     try writer.writeAll(data);
     try compressor.close();
+
+    return digest;
 }
+
+pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, hash: *const [20]u8, writer: anytype) !ObjectHeader {
+    const hex_digest = try std.fmt.allocPrint(allocator, "{s}", .{ std.fmt.fmtSliceHexLower(hash) });
+    defer allocator.free(hex_digest);
+
+    const path = try fs.path.join(allocator, &.{ git_dir_path, "objects", hex_digest[0..2], hex_digest[2..] });
+    defer allocator.free(path);
+
+    const file = try fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    var decompressor = try std.compress.zlib.zlibStream(allocator, file.reader());
+    defer decompressor.deinit();
+    const reader = decompressor.reader();
+
+    const header = try reader.readUntilDelimiterAlloc(allocator, 0, 1024);
+    defer allocator.free(header);
+
+    var header_iter = mem.split(u8, header, " ");
+    const object_type = std.meta.stringToEnum(ObjectType, header_iter.first()) orelse return error.InvalidObjectType;
+    const size = blk: {
+        const s = header_iter.next() orelse return error.InvalidObjectSize;
+        const n = try std.fmt.parseInt(u32, s, 10);
+        break :blk n;
+    };
+
+    var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
+    try fifo.pump(reader, writer);
+
+    return ObjectHeader{
+        .@"type" = object_type,
+        .size = size,
+    };
+}
+
+pub const ObjectHeader = struct {
+    @"type": ObjectType,
+    size: u32,
+};
 
 pub const ObjectType = enum {
     blob,
