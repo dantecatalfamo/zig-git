@@ -218,7 +218,9 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
             const extra_zeroes = (8 - (entry_size % 8)) % 8;
             var extra_zero_idx: usize = 0;
             while (extra_zero_idx < extra_zeroes) : (extra_zero_idx += 1) {
-                _ = try index_reader.readByte();
+                if (try index_reader.readByte() != 0) {
+                    return error.InvalidEntryPathPadding;
+                }
             }
         }
 
@@ -249,6 +251,60 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
         .entries = try entries.toOwnedSlice(),
     };
     return index;
+}
+
+pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index) !void {
+    const index_path = try fs.path.join(allocator, .{ repo_path, ".git", "index" });
+    defer allocator.free(index_path);
+    const index_file = try fs.cwd().createFile(index_path, .{});
+    defer index_file.close();
+
+    const index_writer = index_file.writer();
+
+    try index_writer.writeAll(&index.header.signature);
+    try index_writer.writeIntBig(u32, index.header.version);
+    try index_writer.writeIntBig(u32, index.entries.len);
+
+    std.sort.sort(Index.Entry, index.entries, {}, sortEntries);
+
+    for (index.entries) |entry| {
+        const counter = std.io.countingWriter(index_writer);
+        const counting_writer = counter.writer();
+
+        try counting_writer.writeIntBig(u32, entry.ctime_s);
+        try counting_writer.writeIntBig(u32, entry.ctime_n);
+        try counting_writer.writeIntBig(u32, entry.mtime_s);
+        try counting_writer.writeIntBig(u32, entry.mtime_n);
+        try counting_writer.writeIntBig(u32, entry.dev);
+        try counting_writer.writeIntBig(u32, entry.ino);
+        try counting_writer.writeIntBig(u32, @bitCast(u32, entry.mode));
+        try counting_writer.writeIntBig(u32, entry.uid);
+        try counting_writer.writeIntBig(u32, entry.gid);
+        try counting_writer.writeIntBig(u32, entry.file_size);
+        try counting_writer.writeAll(&entry.object_name);
+
+        try counting_writer.writeIntBig(u16, @bitCast(u16, entry.flags));
+        if (index.header.version > 2 and entry.flags.extended) {
+            try counting_writer.writeIntBig(u16, @bitCast(u16, entry.extended_flags));
+        }
+
+        try counting_writer.writeAll(entry.path);
+        try counting_writer.writeByte(0);
+
+        const entry_length = counter.bytes_written;
+        if (index.header.version < 4) {
+            const extra_zeroes = (8 - (entry_length % 8)) % 8;
+            var extra_zeroes_idx: usize = 0;
+            while (extra_zeroes_idx < extra_zeroes) : (extra_zeroes_idx += 1) {
+                try counting_writer.writeByte(0);
+            }
+        }
+    }
+}
+
+pub fn sortEntries(context: null, lhs: Index.Entry, rhs: Index.Entry) bool {
+    _ = context;
+    return mem.lessThan(u8, lhs.path, rhs.path);
 }
 
 // https://git-scm.com/docs/index-format
