@@ -254,7 +254,7 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
 }
 
 pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index) !void {
-    const index_path = try fs.path.join(allocator, .{ repo_path, ".git", "index" });
+    const index_path = try fs.path.join(allocator, &.{ repo_path, ".git", "index" });
     defer allocator.free(index_path);
     const index_file = try fs.cwd().createFile(index_path, .{});
     defer index_file.close();
@@ -263,12 +263,17 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index)
 
     try index_writer.writeAll(&index.header.signature);
     try index_writer.writeIntBig(u32, index.header.version);
-    try index_writer.writeIntBig(u32, index.entries.len);
+    try index_writer.writeIntBig(u32, @truncate(u32, index.entries.len));
 
-    std.sort.sort(Index.Entry, index.entries, {}, sortEntries);
+    var entries: []*const Index.Entry = try allocator.alloc(*Index.Entry, index.entries.len);
+    for (index.entries) |entry, idx| {
+        entries[idx] = &entry;
+    }
 
-    for (index.entries) |entry| {
-        const counter = std.io.countingWriter(index_writer);
+    std.sort.sort(*const Index.Entry, entries, {}, sortEntries);
+
+    for (entries) |entry| {
+        var counter = std.io.countingWriter(index_writer);
         const counting_writer = counter.writer();
 
         try counting_writer.writeIntBig(u32, entry.ctime_s);
@@ -284,8 +289,8 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index)
         try counting_writer.writeAll(&entry.object_name);
 
         try counting_writer.writeIntBig(u16, @bitCast(u16, entry.flags));
-        if (index.header.version > 2 and entry.flags.extended) {
-            try counting_writer.writeIntBig(u16, @bitCast(u16, entry.extended_flags));
+        if (index.header.version > 2 and entry.flags.extended and entry.extended_flags != null) {
+            try counting_writer.writeIntBig(u16, @bitCast(u16, entry.extended_flags.?));
         }
 
         try counting_writer.writeAll(entry.path);
@@ -302,7 +307,7 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index)
     }
 }
 
-pub fn sortEntries(context: null, lhs: Index.Entry, rhs: Index.Entry) bool {
+pub fn sortEntries(context: void, lhs: *const Index.Entry, rhs: *const Index.Entry) bool {
     _ = context;
     return mem.lessThan(u8, lhs.path, rhs.path);
 }
@@ -371,3 +376,7 @@ pub const Index = struct {
         reserved: bool,
     };
 };
+
+test "ref all" {
+    std.testing.refAllDecls(@This());
+}
