@@ -39,13 +39,51 @@ pub fn main() !void {
     const path = maybe_path.?;
     try initialize(allocator, path);
     std.debug.print("initialized empty repository {s}\n", .{ path });
-    try os.chdir(path);
     const git_dir_path = try fs.path.join(allocator, &.{ path, ".git" });
     defer allocator.free(git_dir_path);
     const hash = try saveObject(allocator, git_dir_path, "test\n", .blob);
     std.debug.print("Hash: {x}\n", .{ std.fmt.fmtSliceHexLower(&hash) });
     const obj_header = try loadObject(allocator, git_dir_path, &hash, std.io.getStdOut().writer());
     std.debug.print("{}\n", .{ obj_header });
+    const made_up_entry = Index.Entry{
+        .ctime_s = 1,
+        .ctime_n = 1,
+        .mtime_s = 1,
+        .mtime_n = 1,
+        .dev = 39,
+        .ino = 1,
+        .mode = Index.Mode{
+            .unix_permissions = 0o644,
+            .unused = 0,
+            .object_type = .regular_file,
+            .padding = 0,
+        },
+        .uid = 1000,
+        .gid = 1000,
+        .file_size = 12,
+        .object_name = [_]u8{0} ** 20,
+        .flags = Index.Flags{
+            .name_length = 13,
+            .stage = 0,
+            .extended = false,
+            .assume_valid = false,
+
+        },
+        .extended_flags = null,
+        .path = "testing_file",
+    };
+    const made_up_index = Index{
+        .allocator = allocator,
+        .header = Index.Header{
+            .signature = "DIRC".*,
+            .version = 2,
+            .entries = 1,
+        },
+        .entries = &.{
+            made_up_entry,
+        }
+    };
+    try writeIndex(allocator, path, made_up_index);
 }
 
 pub fn initialize(allocator: mem.Allocator, repo_path: []const u8) !void {
@@ -256,7 +294,7 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
 pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index) !void {
     const index_path = try fs.path.join(allocator, &.{ repo_path, ".git", "index" });
     defer allocator.free(index_path);
-    const index_file = try fs.cwd().createFile(index_path, .{});
+    const index_file = try fs.cwd().createFile(index_path, .{ .read = true });
     defer index_file.close();
 
     const index_writer = index_file.writer();
@@ -266,6 +304,8 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index)
     try index_writer.writeIntBig(u32, @truncate(u32, index.entries.len));
 
     var entries: []*const Index.Entry = try allocator.alloc(*Index.Entry, index.entries.len);
+    defer allocator.free(entries);
+
     for (index.entries) |entry, idx| {
         entries[idx] = &entry;
     }
@@ -305,6 +345,16 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index)
             }
         }
     }
+
+    try index_file.seekTo(0);
+    var hasher = std.crypto.hash.Sha1.init(.{});
+    var pump_fifo = std.fifo.LinearFifo(u8, .{ .Static = 4086 }).init();
+    try pump_fifo.pump(index_file.reader(), hasher.writer());
+    var index_hash: [20]u8 = undefined;
+    hasher.final(&index_hash);
+
+    try index_file.seekFromEnd(0);
+    try index_writer.writeAll(&index_hash);
 }
 
 pub fn sortEntries(context: void, lhs: *const Index.Entry, rhs: *const Index.Entry) bool {
@@ -351,7 +401,7 @@ pub const Index = struct {
 
     pub const Mode = packed struct (u32) {
         unix_permissions: u9,
-        unused: u3,
+        unused: u3 = 0,
         object_type: EntryType,
         padding: u16 = 0,
     };
