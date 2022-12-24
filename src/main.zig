@@ -13,8 +13,11 @@ pub fn main() !void {
     _ = args.next();
     const maybe_path = args.next();
     if (maybe_path == null) {
-        std.debug.print("No path privided\n", .{});
-        const index = try readIndex(allocator, ".");
+        const repo_root = try findRepoRoot(allocator);
+        defer allocator.free(repo_root);
+
+        std.debug.print("Repo root: {s}\n", .{ repo_root });
+        const index = try readIndex(allocator, repo_root);
         std.debug.print("Signature: {s}\nNum Entries: {d}\nVersion: {d}\n", .{ index.header.signature, index.header.entries, index.header.version });
         for (index.entries) |entry| {
             std.debug.print(
@@ -360,6 +363,41 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index)
 pub fn sortEntries(context: void, lhs: *const Index.Entry, rhs: *const Index.Entry) bool {
     _ = context;
     return mem.lessThan(u8, lhs.path, rhs.path);
+}
+
+/// Find the root of the repository, caller responsible for memory.
+pub fn findRepoRoot(allocator: mem.Allocator) ![]const u8 {
+    var path_buffer: [fs.MAX_PATH_BYTES]u8 = undefined;
+    var dir = fs.cwd();
+
+    while (true) {
+        const absolute_path = try dir.realpath(".", &path_buffer);
+
+        dir.access(".git", .{}) catch |err| {
+            switch (err) {
+                error.FileNotFound => {
+                    if (mem.eql(u8, absolute_path, "/")) {
+                        return error.NoGitRepo;
+                    }
+
+                    var new_dir = try dir.openDir("..", .{});
+                    // Can't close fs.cwd() or we get BADF
+                    if (dir.fd != fs.cwd().fd) {
+                        dir.close();
+                    }
+
+                    dir = new_dir;
+                    continue;
+                },
+                else => return err,
+            }
+        };
+
+        if (dir.fd != fs.cwd().fd) {
+            dir.close();
+        }
+        return allocator.dupe(u8, absolute_path);
+    }
 }
 
 // https://git-scm.com/docs/index-format
