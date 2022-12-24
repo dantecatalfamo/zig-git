@@ -145,8 +145,8 @@ pub fn saveObject(allocator: mem.Allocator, git_dir_path: []const u8, data: []co
     return digest;
 }
 
-pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, hash: *const [20]u8, writer: anytype) !ObjectHeader {
-    const hex_digest = try std.fmt.allocPrint(allocator, "{s}", .{ std.fmt.fmtSliceHexLower(hash) });
+pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_name: *const [20]u8, writer: anytype) !ObjectHeader {
+    const hex_digest = try std.fmt.allocPrint(allocator, "{s}", .{ std.fmt.fmtSliceHexLower(object_name) });
     defer allocator.free(hex_digest);
 
     const path = try fs.path.join(allocator, &.{ git_dir_path, "objects", hex_digest[0..2], hex_digest[2..] });
@@ -464,6 +464,57 @@ pub const Index = struct {
         intent_to_add: bool,
         skip_worktree: bool,
         reserved: bool,
+    };
+};
+
+pub fn readTree(allocator: mem.Allocator, git_dir_path: []const u8, object_name: *const [20]u8) !Tree {
+    var entries = std.ArrayList(Tree.Entry).init(allocator);
+    var object = std.ArrayList(u8).init(allocator);
+
+    const object_type = try loadObject(allocator, git_dir_path, object_name, object.writer());
+    if (object_type.@"type" != .tree) {
+        return error.IncorrectObjectType;
+    }
+
+    var buffer = std.io.fixedBufferStream(object.items);
+    const object_reader = buffer.reader();
+
+    while (buffer.pos != object.items.len) {
+        var mode_buffer: [16]u8 = undefined;
+        const mode_text = try object_reader.readUntilDelimiter(&mode_buffer, ' ');
+        const mode = @bitCast(Index.Mode, try std.fmt.parseInt(u32, mode_text, 8));
+        const path = try object_reader.readUntilDelimiterAlloc(allocator, 0, std.math.maxInt(u32));
+        const tree_object_name = try object_reader.readBytesNoEof(20);
+
+        const entry = Tree.Entry{
+            .mode = mode,
+            .path = path,
+            .object_name = tree_object_name,
+        };
+
+        try entries.append(entry);
+    }
+
+    return Tree{
+        .allocator = allocator,
+        .entries = try entries.toOwnedSlice(),
+    };
+}
+
+pub const Tree = struct {
+    allocator: mem.Allocator,
+    entries: []Entry,
+
+    pub fn deinit(self: *Tree) void {
+        for (self.entries) |entry| {
+            self.allocator.free(entry.path);
+        }
+    }
+
+    pub const Entry = struct {
+        mode: Index.Mode,
+        path: []const u8,
+        object_name: [20]u8,
     };
 };
 
