@@ -401,6 +401,7 @@ pub fn findRepoRoot(allocator: mem.Allocator) ![]const u8 {
 }
 
 // https://git-scm.com/docs/index-format
+// TODO add extension support
 pub const Index = struct {
     allocator: mem.Allocator,
     header: Header,
@@ -445,9 +446,10 @@ pub const Index = struct {
     };
 
     pub const EntryType = enum(u4) {
-        regular_file = 0b1000,
-        symbolic_link = 0b1010,
-        gitlink = 0b1110,
+        tree = 0o04,
+        regular_file = 0o10,
+        symbolic_link = 0o12,
+        gitlink = 0o16,
     };
 
     pub const Flags = packed struct(u16) {
