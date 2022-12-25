@@ -188,6 +188,7 @@ pub const ObjectType = enum {
     blob,
     commit,
     tree,
+    tag,
 };
 
 pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
@@ -499,6 +500,19 @@ pub fn readTree(allocator: mem.Allocator, git_dir_path: []const u8, object_name:
         .allocator = allocator,
         .entries = try entries.toOwnedSlice(),
     };
+}
+
+pub fn writeTree(allocator: mem.Allocator, git_dir_path: []const u8, tree: Tree) ![20]u8 {
+    var tree_data = std.ArrayList(u8).init(allocator);
+    defer tree_data.deinit();
+    var tree_writer = tree_data.writer();
+
+    for (tree.entries) |entry| {
+        try tree_writer.print("{o} {s}\x00", .{ entry.mode, entry.path });
+        try tree_writer.writeAll(&entry.object_name);
+    }
+
+    return saveObject(allocator, git_dir_path, tree_data.items, .tree);
 }
 
 pub const Tree = struct {
