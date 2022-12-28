@@ -521,7 +521,7 @@ pub const Tree = struct {
 
     pub fn deinit(self: *Tree) void {
         for (self.entries) |entry| {
-            self.allocator.free(entry.path);
+            entry.deinit(self.allocator);
         }
     }
 
@@ -529,8 +529,47 @@ pub const Tree = struct {
         mode: Index.Mode,
         path: []const u8,
         object_name: [20]u8,
+
+        pub fn deinit(self: Entry, allocator: mem.Allocator) void {
+            allocator.free(self.path);
+        }
     };
 };
+
+pub fn indexToTree(allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
+    const index = try readIndex(allocator, repo_path);
+    defer index.deinit();
+
+    const EntryList = std.ArrayList(Tree.Entry);
+    var entry_list_map = std.StringHashMap(EntryList).init(allocator);
+    defer entry_list_map.deinit();
+
+    errdefer {
+        var iter = entry_list_map.iterator();
+        while (iter.next()) |entry_list| {
+            for (entry_list.value_ptr.items) |entry| {
+                entry.deinit(allocator);
+            }
+            entry_list.value_ptr.deinit();
+        }
+    }
+
+    for (index.entries) |index_entry| {
+        const dir = fs.path.dirname(index_entry.path) orelse "";
+        const entry_list = try entry_list_map.getOrPut(dir);
+        if (!entry_list.found_existing) {
+            entry_list.value_ptr.* = EntryList.init(allocator);
+        }
+        const tree_entry = Tree.Entry{
+            .mode = index_entry.mode,
+            .path = try allocator.dupe(u8, fs.path.basename(index_entry.path)),
+            .object_name = index_entry.object_name,
+        };
+        errdefer tree_entry.deinit(allocator);
+
+        try entry_list.value_ptr.append(tree_entry);
+    }
+}
 
 test "ref all" {
     std.testing.refAllDecls(@This());
