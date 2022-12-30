@@ -567,9 +567,9 @@ pub fn indexToTree(allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
 
         const valid_dir = dir.?;
         var dir_iter = mem.split(u8, valid_dir, fs.path.sep_str);
-        var cur_tree: NestedTree = root;
+        var cur_tree = &root;
         iter: while (dir_iter.next()) |sub_dir| {
-            for (cur_tree.subtrees.items) |subtree| {
+            for (cur_tree.subtrees.items) |*subtree| {
                 if (mem.eql(u8, subtree.path, sub_dir)) {
                     cur_tree = subtree;
                     continue :iter;
@@ -577,7 +577,7 @@ pub fn indexToTree(allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
             }
             var nested_tree = try NestedTree.init(allocator, sub_dir);
             try cur_tree.subtrees.append(nested_tree);
-            cur_tree = cur_tree.subtrees.items[cur_tree.subtrees.items.len-1];
+            cur_tree = &cur_tree.subtrees.items[cur_tree.subtrees.items.len-1];
         }
         try cur_tree.entries.append(entry);
     }
