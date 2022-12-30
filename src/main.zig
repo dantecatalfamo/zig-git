@@ -510,7 +510,7 @@ pub fn writeTree(allocator: mem.Allocator, git_dir_path: []const u8, tree: Tree)
     std.sort.sort(Tree.Entry, tree.entries, {}, sortTreeEntries);
 
     for (tree.entries) |entry| {
-        try tree_writer.print("{o} {s}\x00", .{ entry.mode, entry.path });
+        try tree_writer.print("{o} {s}\x00", .{ @bitCast(u32, entry.mode), entry.path });
         try tree_writer.writeAll(&entry.object_name);
     }
 
