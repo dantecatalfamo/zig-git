@@ -314,7 +314,7 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index)
         entries[idx] = &entry;
     }
 
-    std.sort.sort(*const Index.Entry, entries, {}, sortEntries);
+    std.sort.sort(*const Index.Entry, entries, {}, sortIndexEntries);
 
     for (entries) |entry| {
         var counter = std.io.countingWriter(index_writer);
@@ -361,7 +361,7 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index)
     try index_writer.writeAll(&index_hash);
 }
 
-pub fn sortEntries(context: void, lhs: *const Index.Entry, rhs: *const Index.Entry) bool {
+pub fn sortIndexEntries(context: void, lhs: *const Index.Entry, rhs: *const Index.Entry) bool {
     _ = context;
     return mem.lessThan(u8, lhs.path, rhs.path);
 }
@@ -507,12 +507,19 @@ pub fn writeTree(allocator: mem.Allocator, git_dir_path: []const u8, tree: Tree)
     defer tree_data.deinit();
     var tree_writer = tree_data.writer();
 
+    std.sort.sort(Tree.Entry, tree.entries, {}, sortTreeEntries);
+
     for (tree.entries) |entry| {
         try tree_writer.print("{o} {s}\x00", .{ entry.mode, entry.path });
         try tree_writer.writeAll(&entry.object_name);
     }
 
     return saveObject(allocator, git_dir_path, tree_data.items, .tree);
+}
+
+fn sortTreeEntries(context: void, lhs: Tree.Entry, rhs: Tree.Entry) bool {
+    _ = context;
+    return mem.lessThan(u8, lhs.path, rhs.path);
 }
 
 pub const Tree = struct {
@@ -534,42 +541,108 @@ pub const Tree = struct {
             allocator.free(self.path);
         }
     };
+
+    pub const EntryList = std.ArrayList(Tree.Entry);
 };
 
 pub fn indexToTree(allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
     const index = try readIndex(allocator, repo_path);
     defer index.deinit();
 
-    const EntryList = std.ArrayList(Tree.Entry);
-    var entry_list_map = std.StringHashMap(EntryList).init(allocator);
-    defer entry_list_map.deinit();
-
-    errdefer {
-        var iter = entry_list_map.iterator();
-        while (iter.next()) |entry_list| {
-            for (entry_list.value_ptr.items) |entry| {
-                entry.deinit(allocator);
-            }
-            entry_list.value_ptr.deinit();
-        }
-    }
+    var root = try NestedTree.init(allocator, "");
 
     for (index.entries) |index_entry| {
-        const dir = fs.path.dirname(index_entry.path) orelse "";
-        const entry_list = try entry_list_map.getOrPut(dir);
-        if (!entry_list.found_existing) {
-            entry_list.value_ptr.* = EntryList.init(allocator);
-        }
-        const tree_entry = Tree.Entry{
+        var entry = Tree.Entry{
             .mode = index_entry.mode,
             .path = try allocator.dupe(u8, fs.path.basename(index_entry.path)),
             .object_name = index_entry.object_name,
         };
-        errdefer tree_entry.deinit(allocator);
 
-        try entry_list.value_ptr.append(tree_entry);
+        const dir = fs.path.dirname(index_entry.path);
+
+        if (dir == null) {
+            try root.entries.append(entry);
+            continue;
+        }
+
+        const valid_dir = dir.?;
+        var dir_iter = mem.split(u8, valid_dir, fs.path.sep_str);
+        var cur_tree: NestedTree = root;
+        iter: while (dir_iter.next()) |sub_dir| {
+            for (cur_tree.subtrees.items) |subtree| {
+                if (mem.eql(u8, subtree.path, sub_dir)) {
+                    cur_tree = subtree;
+                    continue :iter;
+                }
+            }
+            var nested_tree = try NestedTree.init(allocator, sub_dir);
+            try cur_tree.subtrees.append(nested_tree);
+            cur_tree = cur_tree.subtrees.items[cur_tree.subtrees.items.len-1];
+        }
+        try cur_tree.entries.append(entry);
     }
+
+    const git_dir_path = try fs.path.join(allocator, &.{ repo_path, ".git" });
+    defer allocator.free(git_dir_path);
+
+    return try root.toTree(git_dir_path);
 }
+
+
+pub const NestedTree = struct {
+    allocator: mem.Allocator,
+    entries: Tree.EntryList,
+    subtrees: NestedTreeList,
+    path: []const u8,
+
+    pub fn init(allocator: mem.Allocator, path: []const u8) !NestedTree {
+        return .{
+            .allocator = allocator,
+            .entries = Tree.EntryList.init(allocator),
+            .subtrees = NestedTreeList.init(allocator),
+            .path = try allocator.dupe(u8, path),
+        };
+    }
+
+    pub fn deinit(self: NestedTree) void {
+        self.allocator.free(self.path);
+        for (self.entries.items) |entry| {
+            entry.deinit();
+        }
+        self.entries.deinit();
+        for (self.subtrees.items) |subtree| {
+            subtree.deinit();
+        }
+        self.subtrees.deinit();
+    }
+
+    pub fn toTree(self: *NestedTree, git_dir_path: []const u8) !Tree {
+        if (self.subtrees.items.len == 0) {
+            return .{
+                .allocator = self.allocator,
+                .entries = try self.entries.toOwnedSlice(),
+            };
+        }
+
+        while (self.subtrees.popOrNull()) |*subtree| {
+            var tree = try subtree.toTree(git_dir_path);
+            const object_name = try writeTree(self.allocator, git_dir_path, tree);
+            var entry = Tree.Entry{
+                .mode = .tree,
+                .path = subtree.name,
+                .object_name = object_name,
+            };
+            try self.entries.append(entry);
+        }
+
+        return .{
+            .allocator = self.allocator,
+            .entries = try self.entries.toOwnedSlice(),
+        };
+    }
+};
+
+pub const NestedTreeList = std.ArrayList(NestedTree);
 
 test "ref all" {
     std.testing.refAllDecls(@This());
