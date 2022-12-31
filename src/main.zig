@@ -585,7 +585,8 @@ pub fn indexToTree(allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
     const git_dir_path = try fs.path.join(allocator, &.{ repo_path, ".git" });
     defer allocator.free(git_dir_path);
 
-    return try root.toTree(git_dir_path);
+    const root_tree = try root.toTree(git_dir_path);
+    return writeTree(allocator, git_dir_path, root_tree);
 }
 
 
@@ -624,16 +625,21 @@ pub const NestedTree = struct {
             };
         }
 
-        while (self.subtrees.popOrNull()) |*subtree| {
+        for (self.subtrees.items) |*subtree| {
             var tree = try subtree.toTree(git_dir_path);
             const object_name = try writeTree(self.allocator, git_dir_path, tree);
             var entry = Tree.Entry{
-                .mode = .tree,
-                .path = subtree.name,
+                .mode = Index.Mode{
+                    .unix_permissions = 0,
+                    .object_type = .tree,
+                },
+                .path = subtree.path,
                 .object_name = object_name,
             };
             try self.entries.append(entry);
         }
+
+        self.subtrees.clearAndFree();
 
         return .{
             .allocator = self.allocator,
