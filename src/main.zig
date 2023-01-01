@@ -19,7 +19,7 @@ pub fn main() !void {
         std.debug.print("Repo root: {s}\n", .{ repo_root });
         const index = try readIndex(allocator, repo_root);
         std.debug.print("Signature: {s}\nNum Entries: {d}\nVersion: {d}\n", .{ index.header.signature, index.header.entries, index.header.version });
-        for (index.entries) |entry| {
+        for (index.entries.items) |entry| {
             std.debug.print(
                 \\Entry:
                     \\ Mode: {o}
@@ -75,16 +75,15 @@ pub fn main() !void {
         .extended_flags = null,
         .path = "testing_file",
     };
+    var entries = Index.EntryList.init(allocator);
+    try entries.append(made_up_entry);
     const made_up_index = Index{
-        .allocator = allocator,
         .header = Index.Header{
             .signature = "DIRC".*,
             .version = 2,
             .entries = 1,
         },
-        .entries = &.{
-            made_up_entry,
-        }
+        .entries = entries,
     };
     try writeIndex(allocator, path, made_up_index);
 }
@@ -120,6 +119,7 @@ pub fn hashObject(data: []const u8, obj_type: ObjectType, digest: *[20]u8) void 
     hash.final(digest);
 }
 
+// TODO Maybe rewrite to use a reader interface instead of a data slice
 pub fn saveObject(allocator: mem.Allocator, git_dir_path: []const u8, data: []const u8, obj_type: ObjectType) ![20]u8 {
     var digest: [20]u8 = undefined;
     hashObject(data, obj_type, &digest);
@@ -223,7 +223,7 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
         return error.UnsupportedIndexVersion;
     }
 
-    var entries = std.ArrayList(Index.Entry).init(allocator);
+    var entries = Index.EntryList.init(allocator);
 
     var idx: usize = 0;
     while (idx < header.entries) : (idx += 1) {
@@ -288,9 +288,8 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
 
     const index = try allocator.create(Index);
     index.* = Index{
-        .allocator = allocator,
         .header = header,
-        .entries = try entries.toOwnedSlice(),
+        .entries = entries,
     };
     return index;
 }
@@ -305,12 +304,12 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index)
 
     try index_writer.writeAll(&index.header.signature);
     try index_writer.writeIntBig(u32, index.header.version);
-    try index_writer.writeIntBig(u32, @truncate(u32, index.entries.len));
+    try index_writer.writeIntBig(u32, @truncate(u32, index.entries.items.len));
 
-    var entries: []*const Index.Entry = try allocator.alloc(*Index.Entry, index.entries.len);
+    var entries: []*const Index.Entry = try allocator.alloc(*Index.Entry, index.entries.items.len);
     defer allocator.free(entries);
 
-    for (index.entries) |entry, idx| {
+    for (index.entries.items) |entry, idx| {
         entries[idx] = &entry;
     }
 
@@ -404,16 +403,15 @@ pub fn findRepoRoot(allocator: mem.Allocator) ![]const u8 {
 // https://git-scm.com/docs/index-format
 // TODO add extension support
 pub const Index = struct {
-    allocator: mem.Allocator,
     header: Header,
-    entries: []const Entry,
+    entries: EntryList,
 
     pub fn deinit(self: *const Index) void {
-        for (self.entries) |entry| {
-            self.allocator.free(entry.path);
+        for (self.entries.items) |entry| {
+            self.entries.allocator.free(entry.path);
         }
-        self.allocator.free(self.entries);
-        self.allocator.destroy(self);
+        self.entries.deinit();
+        self.entries.allocator.destroy(self);
     }
 
     pub const Header = struct {
@@ -438,6 +436,8 @@ pub const Index = struct {
         extended_flags: ?ExtendedFlags, // v3+ and extended only
         path: []const u8,
     };
+
+    pub const EntryList = std.ArrayList(Entry);
 
     pub const Mode = packed struct (u32) {
         unix_permissions: u9,
@@ -551,7 +551,7 @@ pub fn indexToTree(allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
 
     var root = try NestedTree.init(allocator, "");
 
-    for (index.entries) |index_entry| {
+    for (index.entries.items) |index_entry| {
         var entry = Tree.Entry{
             .mode = index_entry.mode,
             .path = try allocator.dupe(u8, fs.path.basename(index_entry.path)),
@@ -649,6 +649,63 @@ pub const NestedTree = struct {
 };
 
 pub const NestedTreeList = std.ArrayList(NestedTree);
+
+
+pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, file_path: []const u8) !void {
+    var index = try readIndex(allocator, repo_path);
+    defer index.deinit();
+
+    const file = try fs.cwd().openFile(file_path, .{});
+    const stat: os.linux.Stat = try os.fstat(file.handle);
+    const repo_relative_path = try fs.path.relative(allocator, file_path, repo_path);
+
+    const data = try file.readToEndAlloc(allocator, std.math.maxInt(u32));
+    defer allocator.free(data);
+
+    const name_len = blk: {
+        if (repo_relative_path.len > 0xFFF) {
+            break :blk @as(u12, 0xFFF);
+        } else {
+            break :blk @truncate(u12, repo_relative_path.len);
+        }
+    };
+
+    const git_dir_path = try repoToGitDir(allocator, repo_path);
+    defer allocator.free(git_dir_path);
+
+    const object_name = try saveObject(allocator, git_dir_path, data, .blob);
+
+    const entry = Index.Entry{
+        .ctime_s = @intCast(u32, stat.ctime().tv_sec),
+        .ctime_n = @intCast(u32, stat.ctime().tv_nsec),
+        .mtime_s = @intCast(u32, stat.mtime().tv_sec),
+        .mtime_n = @intCast(u32, stat.mtime().tv_nsec),
+        .dev = @intCast(u32, stat.dev),
+        .ino = @intCast(u32, stat.ino),
+        .mode = @bitCast(Index.Mode, stat.mode),
+        .uid = stat.uid,
+        .gid = stat.gid,
+        .file_size = @intCast(u32, stat.size),
+        .object_name = object_name,
+        .flags = .{
+            .name_length = name_len,
+            .stage = 0,
+            .extended = false,
+            .assume_valid = false,
+        },
+        .extended_flags = null,
+        .path = repo_relative_path,
+    };
+
+    try index.entries.append(entry);
+    index.header.entries += 1;
+
+    try writeIndex(allocator, repo_path, index);
+}
+
+pub fn repoToGitDir(allocator: mem.Allocator, repo_path: []const u8) ![]const u8 {
+    return try fs.path.join(allocator, &.{ repo_path, ".git" });
+}
 
 test "ref all" {
     std.testing.refAllDecls(@This());
