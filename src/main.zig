@@ -85,7 +85,7 @@ pub fn main() !void {
         },
         .entries = entries,
     };
-    try writeIndex(allocator, path, made_up_index);
+    try writeIndex(allocator, path, &made_up_index);
 }
 
 pub fn initialize(allocator: mem.Allocator, repo_path: []const u8) !void {
@@ -294,7 +294,7 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
     return index;
 }
 
-pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: Index) !void {
+pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: *const Index) !void {
     const index_path = try fs.path.join(allocator, &.{ repo_path, ".git", "index" });
     defer allocator.free(index_path);
     const index_file = try fs.cwd().createFile(index_path, .{ .read = true });
@@ -408,7 +408,7 @@ pub const Index = struct {
 
     pub fn deinit(self: *const Index) void {
         for (self.entries.items) |entry| {
-            self.entries.allocator.free(entry.path);
+            entry.deinit(self.entries.allocator);
         }
         self.entries.deinit();
         self.entries.allocator.destroy(self);
@@ -435,6 +435,10 @@ pub const Index = struct {
         flags: Flags,
         extended_flags: ?ExtendedFlags, // v3+ and extended only
         path: []const u8,
+
+        pub fn deinit(self: Entry, allocator: mem.Allocator) void {
+            allocator.free(self.path);
+        }
     };
 
     pub const EntryList = std.ArrayList(Entry);
@@ -655,6 +659,16 @@ pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, file_path
     var index = try readIndex(allocator, repo_path);
     defer index.deinit();
 
+    const entry = try fileToIndexEntry(allocator, repo_path, file_path);
+    defer entry.deinit(allocator);
+
+    try index.entries.append(entry);
+    index.header.entries += 1;
+
+    try writeIndex(allocator, repo_path, index);
+}
+
+pub fn fileToIndexEntry(allocator: mem.Allocator, repo_path: []const u8, file_path: []const u8) !Index.Entry {
     const file = try fs.cwd().openFile(file_path, .{});
     const stat: os.linux.Stat = try os.fstat(file.handle);
     const repo_relative_path = try fs.path.relative(allocator, file_path, repo_path);
@@ -697,10 +711,7 @@ pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, file_path
         .path = repo_relative_path,
     };
 
-    try index.entries.append(entry);
-    index.header.entries += 1;
-
-    try writeIndex(allocator, repo_path, index);
+    return entry;
 }
 
 pub fn repoToGitDir(allocator: mem.Allocator, repo_path: []const u8) ![]const u8 {
