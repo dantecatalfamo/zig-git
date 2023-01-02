@@ -654,14 +654,23 @@ pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, file_path
     const entry = try fileToIndexEntry(allocator, repo_path, file_path);
     errdefer entry.deinit(allocator);
 
-    for (index.entries.items) |existing_entry| {
-        if (mem.eql(u8, &existing_entry.object_name, &entry.object_name) and mem.eql(u8, existing_entry.path, entry.path)) {
-            std.debug.print("Entry already exists in index, passing\n", .{});
+    var replaced = false;
+
+    for (index.entries.items) |*existing_entry| {
+        if (mem.eql(u8, existing_entry.path, entry.path)) {
+            std.debug.print("Replacing index entry at path {s}\n", .{ entry.path });
+            // Replace entry instead of removing old and adding new separately
+            existing_entry.deinit(allocator);
+            existing_entry.* = entry;
+            replaced = true;
+            break;
         }
     }
 
-    try index.entries.append(entry);
-    index.header.entries += 1;
+    if (!replaced) {
+        try index.entries.append(entry);
+        index.header.entries += 1;
+    }
 
     try writeIndex(allocator, repo_path, index);
 }
