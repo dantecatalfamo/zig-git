@@ -482,6 +482,12 @@ pub const Index = struct {
         pub fn deinit(self: Entry, allocator: mem.Allocator) void {
             allocator.free(self.path);
         }
+
+        pub fn format(self: Entry, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try out_stream.print("Index.Entry{{ mode: {o}, object_name: {s}, path: {s} }}", .{ @bitCast(u32, self.mode), std.fmt.fmtSliceHexLower(&self.object_name), self.path });
+        }
     };
 
     pub const EntryList = std.ArrayList(Entry);
