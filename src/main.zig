@@ -76,7 +76,7 @@ pub fn initializeBare(allocator: mem.Allocator, repo_path: []const u8) !void {
     defer allocator.free(head_path);
 
     const head = try fs.cwd().createFile(head_path, .{});
-    try head.writeAll("ref: refs/heads/master");
+    try head.writeAll("ref: refs/heads/master\n");
     defer head.close();
 }
 
