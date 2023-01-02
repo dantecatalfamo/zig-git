@@ -723,7 +723,11 @@ pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, file_path
 pub fn fileToIndexEntry(allocator: mem.Allocator, repo_path: []const u8, file_path: []const u8) !Index.Entry {
     const file = try fs.cwd().openFile(file_path, .{});
     const stat: os.linux.Stat = try os.fstat(file.handle);
-    const repo_relative_path = try fs.path.relative(allocator, file_path, repo_path);
+    const absolute_repo_path = try fs.cwd().realpathAlloc(allocator, repo_path);
+    defer allocator.free(absolute_repo_path);
+    const absolute_file_path = try fs.cwd().realpathAlloc(allocator, file_path);
+    defer allocator.free(absolute_file_path);
+    const repo_relative_path = try fs.path.relative(allocator, absolute_repo_path, absolute_file_path);
 
     const data = try file.readToEndAlloc(allocator, std.math.maxInt(u32));
     defer allocator.free(data);
