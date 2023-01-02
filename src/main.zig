@@ -339,8 +339,8 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: *const
     var entries: []*const Index.Entry = try allocator.alloc(*Index.Entry, index.entries.items.len);
     defer allocator.free(entries);
 
-    for (index.entries.items) |entry, idx| {
-        entries[idx] = &entry;
+    for (index.entries.items) |*entry, idx| {
+        entries[idx] = entry;
     }
 
     std.sort.sort(*const Index.Entry, entries, {}, sortIndexEntries);
