@@ -729,6 +729,27 @@ pub fn repoToGitDir(allocator: mem.Allocator, repo_path: []const u8) ![]const u8
     return try fs.path.join(allocator, &.{ repo_path, ".git" });
 }
 
+pub fn writeCommit(allocator: mem.Allocator, repo_path: []const u8, commit: Commit) ![20]u8 {
+}
+
+pub const Commit = struct {
+    allocator: mem.Allocator,
+    tree: [20]u8,
+    parents: ObjectNameList,
+    author: Comitter,
+    comitter: Comitter,
+    message: []const u8,
+
+    pub const Comitter = struct {
+        name: []const u8,
+        email: []const u8,
+        time: i64,
+        timezone: i16,
+    };
+};
+
+pub const ObjectNameList = std.ArrayList([20]u8);
+
 test "ref all" {
     std.testing.refAllDecls(@This());
 }
