@@ -25,20 +25,6 @@ pub fn main() !void {
         const index = try readIndex(allocator, repo_root);
         std.debug.print("Signature: {s}\nNum Entries: {d}\nVersion: {d}\n", .{ index.header.signature, index.header.entries, index.header.version });
         for (index.entries.items) |entry| {
-            std.debug.print(
-                \\Entry:
-                    \\ Mode: {o}
-                    \\ Hash: {s}
-                    \\ Size: {d}
-                    \\ Path: {s}
-                    \\
-                    ,
-                .{
-                    @bitCast(u32, entry.mode),
-                    std.fmt.fmtSliceHexLower(&entry.object_name),
-                    entry.file_size,
-                    entry.path
-            });
             std.debug.print("{}\n", .{ entry });
         }
         defer index.deinit();
@@ -69,53 +55,6 @@ pub fn main() !void {
 
         try addFileToIndex(allocator, repo_path, file_path);
     }
-
-
-
-    // const git_dir_path = try fs.path.join(allocator, &.{ path, ".git" });
-    // defer allocator.free(git_dir_path);
-    // const hash = try saveObject(allocator, git_dir_path, "test\n", .blob);
-    // std.debug.print("Hash: {x}\n", .{ std.fmt.fmtSliceHexLower(&hash) });
-    // const obj_header = try loadObject(allocator, git_dir_path, &hash, std.io.getStdOut().writer());
-    // std.debug.print("{}\n", .{ obj_header });
-    // const made_up_entry = Index.Entry{
-    //     .ctime_s = 1,
-    //     .ctime_n = 1,
-    //     .mtime_s = 1,
-    //     .mtime_n = 1,
-    //     .dev = 39,
-    //     .ino = 1,
-    //     .mode = Index.Mode{
-    //         .unix_permissions = 0o644,
-    //         .unused = 0,
-    //         .object_type = .regular_file,
-    //         .padding = 0,
-    //     },
-    //     .uid = 1000,
-    //     .gid = 1000,
-    //     .file_size = 12,
-    //     .object_name = [_]u8{0} ** 20,
-    //     .flags = Index.Flags{
-    //         .name_length = 13,
-    //         .stage = 0,
-    //         .extended = false,
-    //         .assume_valid = false,
-
-    //     },
-    //     .extended_flags = null,
-    //     .path = "testing_file",
-    // };
-    // var entries = Index.EntryList.init(allocator);
-    // try entries.append(made_up_entry);
-    // const made_up_index = Index{
-    //     .header = Index.Header{
-    //         .signature = "DIRC".*,
-    //         .version = 2,
-    //         .entries = 1,
-    //     },
-    //     .entries = entries,
-    // };
-    // try writeIndex(allocator, path, &made_up_index);
 }
 
 pub fn initialize(allocator: mem.Allocator, repo_path: []const u8) !void {
@@ -486,7 +425,8 @@ pub const Index = struct {
         pub fn format(self: Entry, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
             _ = fmt;
             _ = options;
-            try out_stream.print("Index.Entry{{ mode: {o}, object_name: {s}, path: {s} }}", .{ @bitCast(u32, self.mode), std.fmt.fmtSliceHexLower(&self.object_name), self.path });
+            try out_stream.print("Index.Entry{{ mode: {o}, object_name: {s}, size: {d:4}, path: {s} }}",
+                                 .{ @bitCast(u32, self.mode), std.fmt.fmtSliceHexLower(&self.object_name), self.file_size, self.path });
         }
     };
 
@@ -713,6 +653,12 @@ pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, file_path
 
     const entry = try fileToIndexEntry(allocator, repo_path, file_path);
     errdefer entry.deinit(allocator);
+
+    for (index.entries.items) |existing_entry| {
+        if (mem.eql(u8, &existing_entry.object_name, &entry.object_name) and mem.eql(u8, existing_entry.path, entry.path)) {
+            std.debug.print("Entry already exists in index, passing\n", .{});
+        }
+    }
 
     try index.entries.append(entry);
     index.header.entries += 1;
