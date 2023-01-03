@@ -677,7 +677,7 @@ pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, file_path
 
 pub fn fileToIndexEntry(allocator: mem.Allocator, repo_path: []const u8, file_path: []const u8) !Index.Entry {
     const file = try fs.cwd().openFile(file_path, .{});
-    const stat: os.linux.Stat = try os.fstat(file.handle);
+    const stat = try os.fstat(file.handle);
     const absolute_repo_path = try fs.cwd().realpathAlloc(allocator, repo_path);
     defer allocator.free(absolute_repo_path);
     const absolute_file_path = try fs.cwd().realpathAlloc(allocator, file_path);
@@ -707,7 +707,7 @@ pub fn fileToIndexEntry(allocator: mem.Allocator, repo_path: []const u8, file_pa
         .mtime_n = @intCast(u32, stat.mtime().tv_nsec),
         .dev = @intCast(u32, stat.dev),
         .ino = @intCast(u32, stat.ino),
-        .mode = @bitCast(Index.Mode, stat.mode),
+        .mode = @bitCast(Index.Mode, @as(u32, stat.mode)),
         .uid = stat.uid,
         .gid = stat.gid,
         .file_size = @intCast(u32, stat.size),
@@ -730,21 +730,47 @@ pub fn repoToGitDir(allocator: mem.Allocator, repo_path: []const u8) ![]const u8
 }
 
 pub fn writeCommit(allocator: mem.Allocator, repo_path: []const u8, commit: Commit) ![20]u8 {
+    var commit_data = std.ArrayList(u8).init(allocator);
+    defer commit_data.deinit();
+
+    const writer = commit_data.writer();
+
+    try writer.print("tree {s}\n", .{ std.fmt.fmtSliceHexLower(&commit.tree) });
+    for (commit.parents.items) |parent| {
+        try writer.print("parent {s}\n", .{ std.fmt.fmtSliceHexLower(parent) });
+    }
+    const author = commit.author;
+    try writer.print("author {}\n", .{ author });
+    const committer = commit.comitter;
+    try writer.print("committer {}\n", .{ committer });
+
+    try writer.print("\n{s}\n", .{ commit.message });
+
+    const git_dir_path = repoToGitDir(allocator, repo_path);
+    defer allocator.free(git_dir_path);
+
+    return saveObject(allocator, git_dir_path, commit_data.items, .commit);
 }
 
 pub const Commit = struct {
     allocator: mem.Allocator,
     tree: [20]u8,
     parents: ObjectNameList,
-    author: Comitter,
-    comitter: Comitter,
+    author: Committer,
+    committer: Committer,
     message: []const u8,
 
-    pub const Comitter = struct {
+    pub const Committer = struct {
         name: []const u8,
         email: []const u8,
         time: i64,
         timezone: i16,
+
+        pub fn format(self: Committer, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try out_stream.print("{s} <{s}> {d} {d}", .{ self.name, self.email, self.time, self.timezone });
+        }
     };
 };
 
