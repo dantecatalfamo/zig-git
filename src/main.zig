@@ -59,15 +59,21 @@ pub fn main() !void {
         const repo_root = try findRepoRoot(allocator);
         defer allocator.free(repo_root);
 
+        const git_dir_path = try repoToGitDir(allocator, repo_root);
+        defer allocator.free(git_dir_path);
+
         const tree = try indexToTree(allocator, repo_root);
         const committer = Commit.Committer{
             .name = "Gaba Goul",
             .email = "gaba@cool.ca",
-            .time = @divFloor(std.time.milliTimestamp(), @as(i64, 1000)),
-            .timezone = 0,
+            .time = std.time.timestamp(),
+            .timezone = 1,
         };
-        const parents = ObjectNameList.init(allocator);
+        var parents = ObjectNameList.init(allocator);
         defer parents.deinit();
+
+        const head_ref = try resolveRef(allocator, git_dir_path, "HEAD");
+        try parents.append(head_ref);
 
         var commit = Commit{
             .allocator = allocator,
@@ -75,11 +81,16 @@ pub fn main() !void {
             .parents = parents,
             .author = committer,
             .committer = committer,
-            .message = "First commit test!",
+            .message = "Second commit test!",
         };
 
         const object_name = try writeCommit(allocator, repo_root, commit);
-        std.debug.print("Commit {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) });
+
+        const current_ref = try currentRef(allocator, git_dir_path);
+        defer allocator.free(current_ref);
+        std.debug.print("Commit {s} to {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name), current_ref });
+
+        try updateRef(allocator, git_dir_path, current_ref, object_name);
     }
 }
 
@@ -786,12 +797,78 @@ pub const Commit = struct {
         pub fn format(self: Committer, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
             _ = fmt;
             _ = options;
-            try out_stream.print("{s} <{s}> {d} {d}", .{ self.name, self.email, self.time, self.timezone });
+            const sign: u8 = if (self.timezone > 0) '+' else '-';
+            const timezone = @intCast(u16, std.math.absInt(self.timezone) catch 0);
+            try out_stream.print("{s} <{s}> {d} {c}{d:0>4}", .{ self.name, self.email, self.time, sign, timezone });
         }
     };
 };
 
 pub const ObjectNameList = std.ArrayList([20]u8);
+
+pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8,  ref: []const u8) ![20]u8 {
+    const full_path = try refToPath(allocator, git_dir_path, ref);
+    defer allocator.free(full_path);
+
+    const file = try fs.cwd().openFile(full_path, .{});
+    defer file.close();
+
+    const data = try file.reader().readUntilDelimiterAlloc(allocator, '\n', 4096);
+    defer allocator.free(data);
+
+    if (mem.startsWith(u8, data, "ref: ")) {
+        const new_ref = data[5..];
+        return resolveRef(allocator, git_dir_path, new_ref);
+    }
+
+    var object_name: [20]u8 = undefined;
+    _ = try std.fmt.hexToBytes(&object_name, data[0..40]);
+    return object_name;
+}
+
+/// Caller responsible for memory
+pub fn symbolicRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) ![]const u8 {
+    const full_path = try refToPath(allocator, git_dir_path, ref);
+    defer allocator.free(full_path);
+
+    const file = try fs.cwd().openFile(full_path, .{});
+    defer file.close();
+
+    const data = try file.reader().readUntilDelimiterAlloc(allocator, '\n', 4096);
+    defer allocator.free(data);
+
+    if (!mem.startsWith(u8, data, "ref: ")) {
+        return error.NoSymbolicRef;
+    }
+    return allocator.dupe(u8, data[5..]);
+}
+
+/// Caller responsible for memory
+pub fn refToPath(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) ![]const u8 {
+    if (mem.eql(u8, ref, "HEAD")) {
+        return fs.path.join(allocator, &.{ git_dir_path, ref });
+    } else if (mem.indexOf(u8, ref, "/") == null) {
+        return fs.path.join(allocator, &.{ git_dir_path, "refs/heads", ref });
+    } else if (mem.startsWith(u8, ref, "refs/")) {
+        return fs.path.join(allocator, &.{ git_dir_path, ref });
+    }
+    return error.InvalidRef;
+}
+
+pub fn updateRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8, object_name: [20]u8) !void {
+    const full_path = try refToPath(allocator, git_dir_path, ref);
+    defer allocator.free(full_path);
+
+    const file = try fs.cwd().createFile(full_path, .{});
+    defer file.close();
+
+    try file.writer().print("{s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) });
+}
+
+/// Caller responsible for memory
+pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) ![]const u8 {
+    return symbolicRef(allocator, git_dir_path, "HEAD");
+}
 
 test "ref all" {
     std.testing.refAllDecls(@This());
