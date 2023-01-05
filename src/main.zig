@@ -564,26 +564,26 @@ pub const Tree = struct {
     pub const EntryList = std.ArrayList(Tree.Entry);
 };
 
-pub fn indexToTree(allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
+pub fn indexToTree(child_allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
+    var arena = std.heap.ArenaAllocator.init(child_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
     const index = try readIndex(allocator, repo_path);
-    defer index.deinit();
 
     var root = try NestedTree.init(allocator, "");
-    defer root.deinit();
 
     for (index.entries.items) |index_entry| {
-        var entry = Tree.Entry{
+        var tree_entry = Tree.Entry{
             .mode = index_entry.mode,
-            .path = try allocator.dupe(u8, fs.path.basename(index_entry.path)),
+            .path = fs.path.basename(index_entry.path),
             .object_name = index_entry.object_name,
         };
-
-        errdefer allocator.free(entry.path);
 
         const dir = fs.path.dirname(index_entry.path);
 
         if (dir == null) {
-            try root.entries.append(entry);
+            try root.entries.append(tree_entry);
             continue;
         }
 
@@ -601,20 +601,16 @@ pub fn indexToTree(allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
             try cur_tree.subtrees.append(nested_tree);
             cur_tree = &cur_tree.subtrees.items[cur_tree.subtrees.items.len-1];
         }
-        try cur_tree.entries.append(entry);
+        try cur_tree.entries.append(tree_entry);
     }
 
     const git_dir_path = try fs.path.join(allocator, &.{ repo_path, ".git" });
-    defer allocator.free(git_dir_path);
 
-    var root_tree = try root.toTree(git_dir_path);
-    defer root_tree.deinit();
-
-    return writeTree(allocator, git_dir_path, root_tree);
+    return root.toTree(git_dir_path);
 }
 
 
-pub const NestedTree = struct {
+const NestedTree = struct {
     allocator: mem.Allocator,
     entries: Tree.EntryList,
     subtrees: NestedTreeList,
@@ -625,53 +621,40 @@ pub const NestedTree = struct {
             .allocator = allocator,
             .entries = Tree.EntryList.init(allocator),
             .subtrees = NestedTreeList.init(allocator),
-            .path = try allocator.dupe(u8, path),
+            .path = path,
         };
     }
 
-    pub fn deinit(self: NestedTree) void {
-        self.allocator.free(self.path);
-        for (self.entries.items) |entry| {
-            entry.deinit(self.allocator);
-        }
-        self.entries.deinit();
-        for (self.subtrees.items) |subtree| {
-            subtree.deinit();
-        }
-        self.subtrees.deinit();
-    }
+    pub fn toTree(self: *NestedTree, git_dir_path: []const u8) ![20]u8 {
 
-    pub fn toTree(self: *NestedTree, git_dir_path: []const u8) !Tree {
         if (self.subtrees.items.len == 0) {
-            return .{
+            const tree = Tree{
                 .allocator = self.allocator,
-                .entries = try self.entries.toOwnedSlice(),
+                .entries = self.entries.items,
             };
+            return writeTree(self.allocator, git_dir_path, tree);
         }
 
         for (self.subtrees.items) |*subtree| {
-            var tree = try subtree.toTree(git_dir_path);
-            defer tree.deinit();
+            var child_object_name = try subtree.toTree(git_dir_path);
 
-            const object_name = try writeTree(self.allocator, git_dir_path, tree);
             var entry = Tree.Entry{
                 .mode = Index.Mode{
                     .unix_permissions = 0,
                     .object_type = .tree,
                 },
-                .path = try self.allocator.dupe(u8, subtree.path),
-                .object_name = object_name,
+                .path = subtree.path,
+                .object_name = child_object_name,
             };
             try self.entries.append(entry);
-            subtree.deinit();
         }
 
-        self.subtrees.clearAndFree();
-
-        return .{
+        const tree = Tree{
             .allocator = self.allocator,
-            .entries = try self.entries.toOwnedSlice(),
+            .entries = self.entries.items,
         };
+
+        return writeTree(self.allocator, git_dir_path, tree);
     }
 };
 
