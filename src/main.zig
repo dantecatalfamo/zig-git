@@ -818,6 +818,7 @@ pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8,  ref: []co
 
     if (mem.startsWith(u8, data, "ref: ")) {
         const new_ref = data[5..];
+        // TODO avoid infinite recursion on cyclical references
         return resolveRef(allocator, git_dir_path, new_ref);
     }
 
