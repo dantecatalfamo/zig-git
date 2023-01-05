@@ -845,12 +845,10 @@ pub fn symbolicRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []co
 
 /// Caller responsible for memory
 pub fn refToPath(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) ![]const u8 {
-    if (mem.eql(u8, ref, "HEAD")) {
+    if (mem.eql(u8, ref, "HEAD") or mem.startsWith(u8, ref, "refs/")) {
         return fs.path.join(allocator, &.{ git_dir_path, ref });
     } else if (mem.indexOf(u8, ref, "/") == null) {
         return fs.path.join(allocator, &.{ git_dir_path, "refs/heads", ref });
-    } else if (mem.startsWith(u8, ref, "refs/")) {
-        return fs.path.join(allocator, &.{ git_dir_path, ref });
     }
     return error.InvalidRef;
 }
