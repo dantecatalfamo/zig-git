@@ -5,7 +5,7 @@ const fs = std.fs;
 const zlibStreamWriter = @import("zlib_writer.zig").zlibStreamWriter;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
     var allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
@@ -54,6 +54,32 @@ pub fn main() !void {
         defer allocator.free(repo_path);
 
         try addFileToIndex(allocator, repo_path, file_path);
+
+    } else if (mem.eql(u8, subcommand, "commit")) {
+        const repo_root = try findRepoRoot(allocator);
+        defer allocator.free(repo_root);
+
+        const tree = try indexToTree(allocator, repo_root);
+        const committer = Commit.Committer{
+            .name = "Gaba Goul",
+            .email = "gaba@cool.ca",
+            .time = @divFloor(std.time.milliTimestamp(), @as(i64, 1000)),
+            .timezone = 0,
+        };
+        const parents = ObjectNameList.init(allocator);
+        defer parents.deinit();
+
+        var commit = Commit{
+            .allocator = allocator,
+            .tree = tree,
+            .parents = parents,
+            .author = committer,
+            .committer = committer,
+            .message = "First commit test!",
+        };
+
+        const object_name = try writeCommit(allocator, repo_root, commit);
+        std.debug.print("Commit {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) });
     }
 }
 
@@ -543,6 +569,7 @@ pub fn indexToTree(allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
     defer index.deinit();
 
     var root = try NestedTree.init(allocator, "");
+    defer root.deinit();
 
     for (index.entries.items) |index_entry| {
         var entry = Tree.Entry{
@@ -550,6 +577,8 @@ pub fn indexToTree(allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
             .path = try allocator.dupe(u8, fs.path.basename(index_entry.path)),
             .object_name = index_entry.object_name,
         };
+
+        errdefer allocator.free(entry.path);
 
         const dir = fs.path.dirname(index_entry.path);
 
@@ -578,7 +607,9 @@ pub fn indexToTree(allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
     const git_dir_path = try fs.path.join(allocator, &.{ repo_path, ".git" });
     defer allocator.free(git_dir_path);
 
-    const root_tree = try root.toTree(git_dir_path);
+    var root_tree = try root.toTree(git_dir_path);
+    defer root_tree.deinit();
+
     return writeTree(allocator, git_dir_path, root_tree);
 }
 
@@ -601,7 +632,7 @@ pub const NestedTree = struct {
     pub fn deinit(self: NestedTree) void {
         self.allocator.free(self.path);
         for (self.entries.items) |entry| {
-            entry.deinit();
+            entry.deinit(self.allocator);
         }
         self.entries.deinit();
         for (self.subtrees.items) |subtree| {
@@ -620,16 +651,19 @@ pub const NestedTree = struct {
 
         for (self.subtrees.items) |*subtree| {
             var tree = try subtree.toTree(git_dir_path);
+            defer tree.deinit();
+
             const object_name = try writeTree(self.allocator, git_dir_path, tree);
             var entry = Tree.Entry{
                 .mode = Index.Mode{
                     .unix_permissions = 0,
                     .object_type = .tree,
                 },
-                .path = subtree.path,
+                .path = try self.allocator.dupe(u8, subtree.path),
                 .object_name = object_name,
             };
             try self.entries.append(entry);
+            subtree.deinit();
         }
 
         self.subtrees.clearAndFree();
@@ -737,16 +771,16 @@ pub fn writeCommit(allocator: mem.Allocator, repo_path: []const u8, commit: Comm
 
     try writer.print("tree {s}\n", .{ std.fmt.fmtSliceHexLower(&commit.tree) });
     for (commit.parents.items) |parent| {
-        try writer.print("parent {s}\n", .{ std.fmt.fmtSliceHexLower(parent) });
+        try writer.print("parent {s}\n", .{ std.fmt.fmtSliceHexLower(&parent) });
     }
     const author = commit.author;
     try writer.print("author {}\n", .{ author });
-    const committer = commit.comitter;
+    const committer = commit.committer;
     try writer.print("committer {}\n", .{ committer });
 
     try writer.print("\n{s}\n", .{ commit.message });
 
-    const git_dir_path = repoToGitDir(allocator, repo_path);
+    const git_dir_path = try repoToGitDir(allocator, repo_path);
     defer allocator.free(git_dir_path);
 
     return saveObject(allocator, git_dir_path, commit_data.items, .commit);
