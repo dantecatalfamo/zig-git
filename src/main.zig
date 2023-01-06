@@ -13,8 +13,17 @@ pub fn main() !void {
     _ = args.next();
 
     const subcommand = args.next() orelse {
-        std.debug.print("No subcommand specified. Available subcommands:\ninit\nindex\nadd\n", .{});
-        return error.NoSubcommand;
+        std.debug.print(
+            \\No subcommand specified.
+            \\Available subcommands:
+            \\init
+            \\index
+            \\add
+            \\commit
+            \\branch
+            \\
+            , .{});
+        return;
     };
 
     if (mem.eql(u8, subcommand, "index")) {
@@ -91,7 +100,23 @@ pub fn main() !void {
         std.debug.print("Commit {s} to {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name), current_ref });
 
         try updateRef(allocator, git_dir_path, current_ref, object_name);
+
+    } else if (mem.eql(u8, subcommand, "branch")) {
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        const git_dir_path = try repoToGitDir(allocator, repo_path);
+        defer allocator.free(git_dir_path);
+
+        const refs = try listHeadRefs(allocator, git_dir_path);
+        defer refs.deinit();
+
+        for (refs.refs) |ref| {
+            std.debug.print("{s}\n", .{ ref });
+        }
     }
+
+
 }
 
 pub fn initialize(allocator: mem.Allocator, repo_path: []const u8) !void {
@@ -868,6 +893,34 @@ pub fn updateRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []cons
 pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) ![]const u8 {
     return symbolicRef(allocator, git_dir_path, "HEAD");
 }
+
+pub fn listHeadRefs(allocator: mem.Allocator, git_dir_path: []const u8) !RefList {
+    const refs_path = try fs.path.join(allocator, &.{ git_dir_path, "refs", "heads" });
+    defer allocator.free(refs_path);
+    const refs_dir = try fs.cwd().openIterableDir(refs_path, .{});
+    var iter = refs_dir.iterate();
+    var headList = std.ArrayList([]const u8).init(allocator);
+    while (try iter.next()) |dir| {
+        try headList.append(try allocator.dupe(u8, dir.name));
+    }
+
+    return .{
+        .allocator = allocator,
+        .refs = try headList.toOwnedSlice(),
+    };
+}
+
+pub const RefList = struct {
+    allocator: mem.Allocator,
+    refs: [][]const u8,
+
+    pub fn deinit(self: RefList) void {
+        for (self.refs) |ref| {
+            self.allocator.free(ref);
+        }
+        self.allocator.free(self.refs);
+    }
+};
 
 test "ref all" {
     std.testing.refAllDecls(@This());
