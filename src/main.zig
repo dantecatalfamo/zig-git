@@ -2,7 +2,9 @@ const std = @import("std");
 const os = std.os;
 const mem = std.mem;
 const fs = std.fs;
-const zlibStreamWriter = @import("zlib_writer.zig").zlibStreamWriter;
+const zlib_writer = @import("zlib_writer.zig");
+const zlibStreamWriter = zlib_writer.zlibStreamWriter;
+const ZlibStreamWriter = zlib_writer.ZlibStreamWriter;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
@@ -62,7 +64,21 @@ pub fn main() !void {
         const repo_path = try findRepoRoot(allocator);
         defer allocator.free(repo_path);
 
-        try addFileToIndex(allocator, repo_path, file_path);
+        var index = readIndex(allocator, repo_path) catch |err| switch (err) {
+            error.FileNotFound => try Index.init(allocator),
+            else => return err,
+        };
+        defer index.deinit();
+
+        const stat = try fs.cwd().statFile(file_path);
+        switch (stat.kind) {
+            .Directory => try addFilesToIndex(allocator, repo_path, index, file_path),
+            .SymLink, .File, => try addFileToIndex(allocator, repo_path, index, file_path),
+            else => |tag| std.debug.print("Cannot add file of type {s} to index\n", .{ @tagName(tag) }),
+        }
+
+        try writeIndex(allocator, repo_path, index);
+
 
     } else if (mem.eql(u8, subcommand, "commit")) {
         const repo_root = try findRepoRoot(allocator);
@@ -732,14 +748,27 @@ const NestedTree = struct {
 
 const NestedTreeList = std.ArrayList(NestedTree);
 
+pub fn addFilesToIndex(allocator: mem.Allocator, repo_path: []const u8, index: *Index, dir_path: []const u8) !void {
+    var dir_iterable = try fs.cwd().openIterableDir(dir_path, .{});
+    defer dir_iterable.close();
 
-pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, file_path: []const u8) !void {
-    var index = readIndex(allocator, repo_path) catch |err| switch (err) {
-        error.FileNotFound => try Index.init(allocator),
-        else => return err,
-    };
-    defer index.deinit();
+    var walker = try dir_iterable.walk(allocator);
+    defer walker.deinit();
 
+    while (try walker.next()) |walker_entry| {
+        switch (walker_entry.kind) {
+            .SymLink, .File => {
+                const joined_path = try fs.path.join(allocator, &.{ dir_path, walker_entry.path });
+                defer allocator.free(joined_path);
+                try addFileToIndex(allocator, repo_path, index, joined_path);
+            },
+            .Directory => continue,
+            else => |tag| std.debug.print("Cannot add type {s} to index\n", .{ @tagName(tag) }),
+        }
+    }
+}
+
+pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, index: *Index, file_path: []const u8) !void {
     const entry = try fileToIndexEntry(allocator, repo_path, file_path);
     errdefer entry.deinit(allocator);
 
@@ -760,8 +789,6 @@ pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, file_path
         try index.entries.append(entry);
         index.header.entries += 1;
     }
-
-    try writeIndex(allocator, repo_path, index);
 }
 
 pub fn fileToIndexEntry(allocator: mem.Allocator, repo_path: []const u8, file_path: []const u8) !Index.Entry {
