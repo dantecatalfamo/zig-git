@@ -176,38 +176,74 @@ pub fn saveObject(allocator: mem.Allocator, git_dir_path: []const u8, data: []co
     return digest;
 }
 
-pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_name: *const [20]u8, writer: anytype) !ObjectHeader {
-    const hex_digest = try std.fmt.allocPrint(allocator, "{s}", .{ std.fmt.fmtSliceHexLower(object_name) });
-    defer allocator.free(hex_digest);
+pub fn objectReader(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !ObjectReader {
+    return ObjectReader.init(allocator, git_dir_path, object_name);
+}
 
-    const path = try fs.path.join(allocator, &.{ git_dir_path, "objects", hex_digest[0..2], hex_digest[2..] });
-    defer allocator.free(path);
+pub const ObjectReader = struct {
+    decompressor: Decompressor,
+    file: fs.File,
+    header: ObjectHeader,
 
-    const file = try fs.cwd().openFile(path, .{});
-    defer file.close();
+    pub const Decompressor = std.compress.zlib.ZlibStream(fs.File.Reader);
+    pub const Reader = Decompressor.Reader;
+    const Self = @This();
 
-    var decompressor = try std.compress.zlib.zlibStream(allocator, file.reader());
-    defer decompressor.deinit();
-    const reader = decompressor.reader();
+    pub fn reader(self: *Self) Reader {
+        return self.decompressor.reader();
+    }
 
-    const header = try reader.readUntilDelimiterAlloc(allocator, 0, 1024);
-    defer allocator.free(header);
+    pub fn init(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !ObjectReader {
+        var hex_buffer: [40]u8 = undefined;
+        const hex_digest = try std.fmt.bufPrint(&hex_buffer, "{s}", .{ std.fmt.fmtSliceHexLower(&object_name) });
 
-    var header_iter = mem.split(u8, header, " ");
-    const object_type = std.meta.stringToEnum(ObjectType, header_iter.first()) orelse return error.InvalidObjectType;
-    const size = blk: {
-        const s = header_iter.next() orelse return error.InvalidObjectSize;
-        const n = try std.fmt.parseInt(u32, s, 10);
-        break :blk n;
-    };
+        const path = try fs.path.join(allocator, &.{ git_dir_path, "objects", hex_digest[0..2], hex_digest[2..] });
+        defer allocator.free(path);
+
+        const file = try fs.cwd().openFile(path, .{});
+
+        var decompressor = try std.compress.zlib.zlibStream(allocator, file.reader());
+        const decompressor_reader = decompressor.reader();
+
+        const header = try decompressor_reader.readUntilDelimiterAlloc(allocator, 0, 1024);
+        defer allocator.free(header);
+
+        var header_iter = mem.split(u8, header, " ");
+        const object_type = std.meta.stringToEnum(ObjectType, header_iter.first()) orelse return error.InvalidObjectType;
+        const size = blk: {
+            const s = header_iter.next() orelse return error.InvalidObjectSize;
+            const n = try std.fmt.parseInt(u32, s, 10);
+            break :blk n;
+        };
+
+        const object_header = ObjectHeader{
+            .@"type" = object_type,
+            .size = size,
+        };
+
+        return .{
+            .decompressor = decompressor,
+            .file = file,
+            .header = object_header,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.decompressor.deinit();
+        self.file.close();
+    }
+};
+
+pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8, writer: anytype) !ObjectHeader {
+    var object_reader = try objectReader(allocator, git_dir_path, object_name);
+    defer object_reader.deinit();
+
+    const reader = object_reader.reader();
 
     var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
     try fifo.pump(reader, writer);
 
-    return ObjectHeader{
-        .@"type" = object_type,
-        .size = size,
-    };
+    return object_reader.header;
 }
 
 pub const ObjectHeader = struct {
@@ -523,7 +559,7 @@ pub const Index = struct {
     };
 };
 
-pub fn readTree(allocator: mem.Allocator, git_dir_path: []const u8, object_name: *const [20]u8) !Tree {
+pub fn readTree(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !Tree {
     var entries = std.ArrayList(Tree.Entry).init(allocator);
     var object = std.ArrayList(u8).init(allocator);
 
@@ -694,7 +730,7 @@ const NestedTree = struct {
     }
 };
 
-pub const NestedTreeList = std.ArrayList(NestedTree);
+const NestedTreeList = std.ArrayList(NestedTree);
 
 
 pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, file_path: []const u8) !void {
