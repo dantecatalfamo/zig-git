@@ -554,7 +554,7 @@ pub const Index = struct {
         pub fn format(self: Entry, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
             _ = fmt;
             _ = options;
-            try out_stream.print("Index.Entry{{ mode: {o}, object_name: {s}, size: {d:4}, path: {s} }}",
+            try out_stream.print("Index.Entry{{ mode: {o}, object_name: {s}, size: {d:5}, path: {s} }}",
                                  .{ @bitCast(u32, self.mode), std.fmt.fmtSliceHexLower(&self.object_name), self.file_size, self.path });
         }
     };
