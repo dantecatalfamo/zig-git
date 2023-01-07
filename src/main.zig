@@ -772,6 +772,15 @@ pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, index: *I
     const entry = try fileToIndexEntry(allocator, repo_path, file_path);
     errdefer entry.deinit(allocator);
 
+    var path_iter = mem.split(u8, file_path, fs.path.sep_str);
+    while (path_iter.next()) |dir| {
+        // Don't add .git files to the index
+        if (mem.eql(u8, dir, ".git") or mem.endsWith(u8, dir, ".git")) {
+            entry.deinit(allocator);
+            return;
+        }
+    }
+
     var replaced = false;
 
     for (index.entries.items) |*existing_entry| {
