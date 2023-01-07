@@ -18,11 +18,12 @@ pub fn main() !void {
         std.debug.print(
             \\No subcommand specified.
             \\Available subcommands:
-            \\init
-            \\index
             \\add
-            \\commit
             \\branch
+            \\commit
+            \\index
+            \\init
+            \\refs
             \\
             , .{});
         return;
@@ -125,6 +126,20 @@ pub fn main() !void {
         defer allocator.free(git_dir_path);
 
         const refs = try listHeadRefs(allocator, git_dir_path);
+        defer refs.deinit();
+
+        for (refs.refs) |ref| {
+            std.debug.print("{s}\n", .{ ref });
+        }
+
+    } else if (mem.eql(u8, subcommand, "refs")) {
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        const git_dir_path = try repoToGitDir(allocator, repo_path);
+        defer allocator.free(git_dir_path);
+
+        const refs = try listRefs(allocator, git_dir_path);
         defer refs.deinit();
 
         for (refs.refs) |ref| {
@@ -971,14 +986,42 @@ pub fn listHeadRefs(allocator: mem.Allocator, git_dir_path: []const u8) !RefList
     defer allocator.free(refs_path);
     const refs_dir = try fs.cwd().openIterableDir(refs_path, .{});
     var iter = refs_dir.iterate();
-    var headList = std.ArrayList([]const u8).init(allocator);
+    var head_list = std.ArrayList([]const u8).init(allocator);
     while (try iter.next()) |dir| {
-        try headList.append(try allocator.dupe(u8, dir.name));
+        try head_list.append(try allocator.dupe(u8, dir.name));
     }
 
     return .{
         .allocator = allocator,
-        .refs = try headList.toOwnedSlice(),
+        .refs = try head_list.toOwnedSlice(),
+    };
+}
+
+pub fn listRefs(allocator: mem.Allocator, git_dir_path: []const u8) !RefList {
+    const refs_path = try fs.path.join(allocator, &.{ git_dir_path, "refs" });
+    defer allocator.free(refs_path);
+
+    var iter = try fs.cwd().openIterableDir(refs_path, .{});
+    defer iter.close();
+
+    var walker = try iter.walk(allocator);
+    defer walker.deinit();
+
+    var ref_list = std.ArrayList([]const u8).init(allocator);
+
+    while (try walker.next()) |walker_entry| {
+        switch (walker_entry.kind) {
+            .File => {
+                const ref_path = try fs.path.join(allocator, &.{ "refs", walker_entry.path });
+                try ref_list.append(ref_path);
+            },
+            else => continue,
+        }
+    }
+
+    return .{
+        .allocator = allocator,
+        .refs = try ref_list.toOwnedSlice(),
     };
 }
 
