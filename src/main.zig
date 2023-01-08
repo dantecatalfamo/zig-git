@@ -112,11 +112,14 @@ pub fn main() !void {
 
         const object_name = try writeCommit(allocator, repo_root, commit);
 
-        const current_ref = try currentRef(allocator, git_dir_path);
-        defer allocator.free(current_ref);
-        std.debug.print("Commit {s} to {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name), current_ref });
+        if (try currentRef(allocator, git_dir_path)) |current_ref| {
+            defer allocator.free(current_ref);
+            std.debug.print("Commit {s} to {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name), current_ref });
 
-        try updateRef(allocator, git_dir_path, current_ref, object_name);
+            try updateRef(allocator, git_dir_path, current_ref, object_name);
+        } else {
+            std.debug.print("Warning: In a detached HEAD state\n", .{});
+        }
 
     } else if (mem.eql(u8, subcommand, "branch")) {
         const repo_path = try findRepoRoot(allocator);
@@ -125,12 +128,38 @@ pub fn main() !void {
         const git_dir_path = try repoToGitDir(allocator, repo_path);
         defer allocator.free(git_dir_path);
 
-        const refs = try listHeadRefs(allocator, git_dir_path);
+        const current_ref = try currentHeadRef(allocator, git_dir_path);
+
+        defer if (current_ref) |valid_ref| allocator.free(valid_ref);
+
+        var refs = try listHeadRefs(allocator, git_dir_path);
         defer refs.deinit();
 
+        std.sort.sort([]const u8, refs.refs, {}, sortStrings);
+
         for (refs.refs) |ref| {
-            std.debug.print("{s}\n", .{ ref });
+            const indicator: u8 = blk: {
+                if (current_ref) |valid_ref| {
+                    break :blk if (mem.eql(u8, valid_ref, ref)) '*' else ' ';
+                } else break :blk ' ';
+            };
+            std.debug.print("{c} {s}\n", .{ indicator, ref });
         }
+
+    } else if (mem.eql(u8, subcommand, "branch-create")) {
+        const new_branch_name = args.next() orelse {
+            std.debug.print("No branch name specified\n", .{});
+            return;
+        };
+
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        const git_dir_path = try repoToGitDir(allocator, repo_path);
+        defer allocator.free(git_dir_path);
+
+        const current_commit = try  resolveRef(allocator, git_dir_path, "HEAD");
+        try updateRef(allocator, git_dir_path, new_branch_name, current_commit);
 
     } else if (mem.eql(u8, subcommand, "refs")) {
         const repo_path = try findRepoRoot(allocator);
@@ -146,8 +175,6 @@ pub fn main() !void {
             std.debug.print("{s}\n", .{ ref });
         }
     }
-
-
 }
 
 pub fn initialize(allocator: mem.Allocator, repo_path: []const u8) !void {
@@ -940,7 +967,7 @@ pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8,  ref: []co
 }
 
 /// Caller responsible for memory
-pub fn symbolicRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) ![]const u8 {
+pub fn symbolicRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) !?[]const u8 {
     const full_path = try refToPath(allocator, git_dir_path, ref);
     defer allocator.free(full_path);
 
@@ -951,9 +978,9 @@ pub fn symbolicRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []co
     defer allocator.free(data);
 
     if (!mem.startsWith(u8, data, "ref: ")) {
-        return error.NoSymbolicRef;
+        return null;
     }
-    return allocator.dupe(u8, data[5..]);
+    return try allocator.dupe(u8, data[5..]);
 }
 
 /// Caller responsible for memory
@@ -977,8 +1004,20 @@ pub fn updateRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []cons
 }
 
 /// Caller responsible for memory
-pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) ![]const u8 {
+pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const u8 {
     return symbolicRef(allocator, git_dir_path, "HEAD");
+}
+
+pub fn currentHeadRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const u8 {
+    const current_ref = try currentRef(allocator, git_dir_path);
+    if (current_ref == null) {
+        return null;
+    }
+
+    defer allocator.free(current_ref.?);
+
+    const current_head_ref = std.mem.trimLeft(u8, current_ref.?, "refs/heads/");
+    return try allocator.dupe(u8, current_head_ref);
 }
 
 pub fn listHeadRefs(allocator: mem.Allocator, git_dir_path: []const u8) !RefList {
@@ -1036,6 +1075,11 @@ pub const RefList = struct {
         self.allocator.free(self.refs);
     }
 };
+
+pub fn sortStrings(context: void, lhs: []const u8, rhs: []const u8) bool {
+    _ = context;
+    return mem.lessThan(u8, lhs, rhs);
+}
 
 test "ref all" {
     std.testing.refAllDecls(@This());
