@@ -376,7 +376,7 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
             }
         };
 
-        const path = try index_reader.readUntilDelimiterAlloc(allocator, 0, std.math.maxInt(usize));
+        const path = try index_reader.readUntilDelimiterAlloc(allocator, 0, fs.MAX_PATH_BYTES);
 
         const entry_end_pos = index_buffer.pos;
         const entry_size = entry_end_pos - entry_begin_pos;
@@ -633,7 +633,7 @@ pub fn readTree(allocator: mem.Allocator, git_dir_path: []const u8, object_name:
         var mode_buffer: [16]u8 = undefined;
         const mode_text = try object_reader.readUntilDelimiter(&mode_buffer, ' ');
         const mode = @bitCast(Index.Mode, try std.fmt.parseInt(u32, mode_text, 8));
-        const path = try object_reader.readUntilDelimiterAlloc(allocator, 0, std.math.maxInt(u32));
+        const path = try object_reader.readUntilDelimiterAlloc(allocator, 0, fs.MAX_PATH_BYTES);
         const tree_object_name = try object_reader.readBytesNoEof(20);
 
         const entry = Tree.Entry{
