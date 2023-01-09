@@ -1081,6 +1081,14 @@ pub fn sortStrings(context: void, lhs: []const u8, rhs: []const u8) bool {
     return mem.lessThan(u8, lhs, rhs);
 }
 
+pub fn restoreObjectToFile(allocator: mem.Allocator, git_dir_path: []const u8, path: []const u8, object_name: [20]u8) !void {
+    const file = try fs.cwd().createFile(path, .{});
+    defer file.close();
+
+    const writer = file.writer();
+    _ = try loadObject(allocator, git_dir_path, object_name, writer);
+}
+
 test "ref all" {
     std.testing.refAllDecls(@This());
 }
