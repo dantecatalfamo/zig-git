@@ -7,7 +7,7 @@ const zlibStreamWriter = zlib_writer.zlibStreamWriter;
 const ZlibStreamWriter = zlib_writer.ZlibStreamWriter;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 12 }){};
     var allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
@@ -20,10 +20,12 @@ pub fn main() !void {
             \\Available subcommands:
             \\add
             \\branch
+            \\branch-create
             \\commit
             \\index
             \\init
             \\refs
+            \\tree
             \\
             , .{});
         return;
@@ -99,7 +101,9 @@ pub fn main() !void {
         defer parents.deinit();
 
         const head_ref = try resolveRef(allocator, git_dir_path, "HEAD");
-        try parents.append(head_ref);
+        if (head_ref) |valid_ref| {
+            try parents.append(valid_ref);
+        }
 
         var commit = Commit{
             .allocator = allocator,
@@ -116,7 +120,7 @@ pub fn main() !void {
             defer allocator.free(current_ref);
             std.debug.print("Commit {s} to {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name), current_ref });
 
-            try updateRef(allocator, git_dir_path, current_ref, object_name);
+            try updateRef(allocator, git_dir_path, current_ref, .{ .object_name = object_name });
         } else {
             std.debug.print("Warning: In a detached HEAD state\n", .{});
         }
@@ -158,8 +162,12 @@ pub fn main() !void {
         const git_dir_path = try repoToGitDir(allocator, repo_path);
         defer allocator.free(git_dir_path);
 
-        const current_commit = try  resolveRef(allocator, git_dir_path, "HEAD");
-        try updateRef(allocator, git_dir_path, new_branch_name, current_commit);
+        const current_commit = try resolveRef(allocator, git_dir_path, "HEAD");
+        if (current_commit) |valid_commit_object_name| {
+            try updateRef(allocator, git_dir_path, new_branch_name, .{ .object_name = valid_commit_object_name });
+        }
+        try updateRef(allocator, git_dir_path, "HEAD", .{ .ref = new_branch_name });
+
 
     } else if (mem.eql(u8, subcommand, "refs")) {
         const repo_path = try findRepoRoot(allocator);
@@ -173,6 +181,30 @@ pub fn main() !void {
 
         for (refs.refs) |ref| {
             std.debug.print("{s}\n", .{ ref });
+        }
+
+    } else if (mem.eql(u8, subcommand, "tree")) {
+        const tree_hash_digest = args.next() orelse {
+            std.debug.print("No tree object name specified\n", .{});
+            return;
+        };
+
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        const git_dir_path = try repoToGitDir(allocator, repo_path);
+        defer allocator.free(git_dir_path);
+
+
+        var tree_name_buffer: [20]u8 = undefined;
+        const tree_object_name = try std.fmt.hexToBytes(&tree_name_buffer, tree_hash_digest);
+        _ = tree_object_name;
+
+        var walker = try walkTree(allocator, git_dir_path, tree_name_buffer);
+        defer walker.deinit();
+
+        while (try walker.next()) |entry| {
+            std.debug.print("{}\n", .{ entry });
         }
     }
 }
@@ -675,7 +707,7 @@ pub const Tree = struct {
     allocator: mem.Allocator,
     entries: []Entry,
 
-    pub fn deinit(self: *Tree) void {
+    pub fn deinit(self: *const Tree) void {
         for (self.entries) |entry| {
             entry.deinit(self.allocator);
         }
@@ -688,6 +720,14 @@ pub const Tree = struct {
 
         pub fn deinit(self: Entry, allocator: mem.Allocator) void {
             allocator.free(self.path);
+        }
+
+        pub fn format(self: Entry, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
+            _ = options;
+            _ = fmt;
+
+            try out_stream.print("Tree.Entry{{ mode: {o: >6}, object_name: {s}, path: {s} }}",
+                                 .{ @bitCast(u32, self.mode), std.fmt.fmtSliceHexLower(&self.object_name), self.path });
         }
     };
 
@@ -945,11 +985,15 @@ pub const Commit = struct {
 
 pub const ObjectNameList = std.ArrayList([20]u8);
 
-pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8,  ref: []const u8) ![20]u8 {
+pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8,  ref: []const u8) !?[20]u8 {
     const full_path = try refToPath(allocator, git_dir_path, ref);
     defer allocator.free(full_path);
 
-    const file = try fs.cwd().openFile(full_path, .{});
+    const file = fs.cwd().openFile(full_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+
     defer file.close();
 
     const data = try file.reader().readUntilDelimiterAlloc(allocator, '\n', 4096);
@@ -985,23 +1029,44 @@ pub fn symbolicRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []co
 
 /// Caller responsible for memory
 pub fn refToPath(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) ![]const u8 {
+    const full_ref = try expandRef(allocator, ref);
+    defer allocator.free(full_ref);
+
+    return fs.path.join(allocator, &.{ git_dir_path, full_ref });
+}
+
+/// Caller responsible for memory
+pub fn expandRef(allocator: mem.Allocator, ref: []const u8) ![]const u8 {
     if (mem.eql(u8, ref, "HEAD") or mem.startsWith(u8, ref, "refs/")) {
-        return fs.path.join(allocator, &.{ git_dir_path, ref });
+        return allocator.dupe(u8, ref);
     } else if (mem.indexOf(u8, ref, "/") == null) {
-        return fs.path.join(allocator, &.{ git_dir_path, "refs/heads", ref });
+        return fs.path.join(allocator, &.{ "refs/heads", ref });
     }
     return error.InvalidRef;
 }
 
-pub fn updateRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8, object_name: [20]u8) !void {
+pub fn updateRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8, target: Ref) !void {
     const full_path = try refToPath(allocator, git_dir_path, ref);
     defer allocator.free(full_path);
 
     const file = try fs.cwd().createFile(full_path, .{});
     defer file.close();
 
-    try file.writer().print("{s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) });
+    switch (target) {
+        .ref => |ref_name| {
+            const full_ref = try expandRef(allocator, ref_name);
+            defer allocator.free(full_ref);
+
+            try file.writer().print("ref: {s}\n", .{ full_ref });
+        },
+        .object_name => |object_name| try file.writer().print("{s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) }),
+    }
 }
+
+pub const Ref = union(enum) {
+    ref: []const u8,
+    object_name: [20]u8,
+};
 
 /// Caller responsible for memory
 pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const u8 {
@@ -1081,13 +1146,163 @@ pub fn sortStrings(context: void, lhs: []const u8, rhs: []const u8) bool {
     return mem.lessThan(u8, lhs, rhs);
 }
 
-pub fn restoreObjectToFile(allocator: mem.Allocator, git_dir_path: []const u8, path: []const u8, object_name: [20]u8) !void {
+pub fn restoreFileFromObject(allocator: mem.Allocator, git_dir_path: []const u8, path: []const u8, object_name: [20]u8) !ObjectHeader {
     const file = try fs.cwd().createFile(path, .{});
     defer file.close();
 
     const writer = file.writer();
-    _ = try loadObject(allocator, git_dir_path, object_name, writer);
+    return try loadObject(allocator, git_dir_path, object_name, writer);
 }
+
+pub fn restoreFileFromCommit(allocator: mem.Allocator, git_dir_path: []const u8, path: []const u8) !void {
+    _ = git_dir_path;
+    _ = allocator;
+    const file = try fs.cwd().createFile(path, .{});
+    defer file.close();
+}
+
+pub fn entryFromTree(allocator: mem.Allocator, git_dir_path: []const u8, tree_object_name: [20]u8, path: []const u8) ![20]u8 {
+    var path_iter = mem.split(u8, path, fs.path.sep_str);
+    var tree_stack = std.ArrayList(Tree).init(allocator);
+    defer {
+        for (tree_stack.items) |stack_tree| {
+            stack_tree.deinit();
+        }
+        tree_stack.deinit();
+    }
+
+    const tree = try readTree(allocator, git_dir_path, tree_object_name);
+    try tree_stack.append(tree);
+
+    while (path_iter.next()) |path_segment| {
+        const current_tree = tree_stack.items[tree_stack.items.len - 1];
+        const final_segment = path_iter.index == null;
+
+        const found_entry = blk: {
+            for (current_tree.entries) |entry| {
+                if (mem.eql(u8, entry.path, path_segment)) {
+                    break :blk entry;
+                }
+            }
+            break :blk null;
+        };
+
+        if (found_entry == null) {
+            return error.NoFileInTree;
+        }
+
+        if (final_segment and found_entry.?.mode.object_type == .tree) {
+            return error.EntryIsTree;
+        }
+
+        if (final_segment and found_entry.?.mode.object_type != .tree) {
+            return found_entry.?.object_name;
+        }
+
+        if (found_entry.?.mode.object_type == .tree) {
+            const new_tree = try readTree(allocator, git_dir_path, found_entry.?.object_name);
+            try tree_stack.append(new_tree);
+        }
+    }
+
+    return error.NoFileInTree;
+}
+
+pub fn walkTree(allocator: mem.Allocator, git_dir_path: []const u8, tree_object_name: [20]u8) !TreeWalker {
+    return TreeWalker.init(allocator, git_dir_path, tree_object_name);
+}
+
+pub const TreeWalker = struct {
+    allocator: mem.Allocator,
+    tree_stack: TreeList,
+    index_stack: IndexList,
+    path_stack: StringList,
+    name_buffer: [fs.MAX_PATH_BYTES]u8,
+    name_index: usize,
+    git_dir_path: []const u8,
+
+    pub fn init(allocator: mem.Allocator, git_dir_path: []const u8, tree_object_name: [20]u8) !TreeWalker {
+        var tree_walker = TreeWalker{
+            .allocator = allocator,
+            .tree_stack = TreeList.init(allocator),
+            .index_stack = IndexList.init(allocator),
+            .path_stack = StringList.init(allocator),
+            .name_buffer = undefined,
+            .name_index = 0,
+            .git_dir_path = git_dir_path,
+        };
+        const tree = try readTree(allocator, git_dir_path, tree_object_name);
+        try tree_walker.tree_stack.append(tree);
+        try tree_walker.index_stack.append(0);
+
+        return tree_walker;
+    }
+
+    pub fn deinit(self: *TreeWalker) void {
+        for (self.tree_stack.items) |tree| {
+            tree.deinit();
+        }
+        self.tree_stack.deinit();
+        self.index_stack.deinit();
+        for (self.path_stack.items) |path_item| {
+            self.allocator.free(path_item);
+        }
+        self.path_stack.deinit();
+    }
+
+    pub fn next(self: *TreeWalker) !?Tree.Entry {
+        if (self.tree_stack.items.len == 0) {
+            return null;
+        }
+
+        const tree_ptr: *Tree = &self.tree_stack.items[self.tree_stack.items.len - 1];
+        const index_ptr: *usize = &self.index_stack.items[self.index_stack.items.len - 1];
+
+        const orig_entry = tree_ptr.entries[index_ptr.*];
+
+        var buffer_alloc = std.heap.FixedBufferAllocator.init(&self.name_buffer);
+
+        // Invalidates path_stack pointers, figure that out
+        try self.path_stack.append(orig_entry.path);
+
+        const entry = Tree.Entry{
+            .mode = orig_entry.mode,
+            .object_name = orig_entry.object_name,
+            .path = try fs.path.join(buffer_alloc.allocator(), self.path_stack.items ),
+        };
+
+        _ = self.path_stack.pop();
+
+        index_ptr.* += 1;
+
+        if (index_ptr.* == tree_ptr.entries.len) {
+            const tree = self.tree_stack.pop();
+            tree.deinit();
+            _ = self.index_stack.pop();
+            if (self.path_stack.items.len != 0) {
+                self.allocator.free(self.path_stack.pop());
+            }
+        }
+
+        if (entry.mode.object_type == .tree) {
+            var new_tree = try readTree(self.allocator, self.git_dir_path, entry.object_name);
+            try self.tree_stack.append(new_tree);
+            try self.path_stack.append(try self.allocator.dupe(u8, entry.path));
+            try self.index_stack.append(0);
+        }
+
+        // do other things like increase index, pop tree, etc.
+        return entry;
+    }
+};
+
+pub const TreeList = std.ArrayList(Tree);
+pub const IndexList = std.ArrayList(usize);
+pub const StringList = std.ArrayList([]const u8);
+
+// pub fn walkTree(allocator: mem.Allocator, git_dir_path: []const u8, tree_object_name: [20]u8) !TreeWalker {
+
+// }
 
 test "ref all" {
     std.testing.refAllDecls(@This());
