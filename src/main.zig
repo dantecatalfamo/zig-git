@@ -18,6 +18,8 @@ pub fn main() !void {
         std.debug.print(
             \\No subcommand specified.
             \\Available subcommands:
+            \\read-commit
+            \\tree
             \\add
             \\branch
             \\branch-create
@@ -25,7 +27,6 @@ pub fn main() !void {
             \\index
             \\init
             \\refs
-            \\tree
             \\
             , .{});
         return;
@@ -195,7 +196,6 @@ pub fn main() !void {
         const git_dir_path = try repoToGitDir(allocator, repo_path);
         defer allocator.free(git_dir_path);
 
-
         var tree_name_buffer: [20]u8 = undefined;
         const tree_object_name = try std.fmt.hexToBytes(&tree_name_buffer, tree_hash_digest);
         _ = tree_object_name;
@@ -206,6 +206,30 @@ pub fn main() !void {
         while (try walker.next()) |entry| {
             std.debug.print("{}\n", .{ entry });
         }
+
+    } else if (mem.eql(u8, subcommand, "read-commit")) {
+        const commit_hash_digest = args.next() orelse {
+            std.debug.print("No commit object hash specified\n", .{});
+            return;
+        };
+
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        const git_dir_path = try repoToGitDir(allocator, repo_path);
+        defer allocator.free(git_dir_path);
+
+        const commit_object_name = try hexDigestToObjectName(commit_hash_digest);
+        const commit = try readCommit(allocator, git_dir_path, commit_object_name);
+        defer commit.deinit();
+
+        std.debug.print("{any}\n", .{ commit });
+
+    } else if (mem.eql(u8, subcommand, "root")) {
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        std.debug.print("{s}\n", .{ repo_path });
     }
 }
 
@@ -958,6 +982,88 @@ pub fn writeCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit: C
     return saveObject(allocator, git_dir_path, commit_data.items, .commit);
 }
 
+pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_object_name: [20]u8) !*Commit {
+    var commit_data = std.ArrayList(u8).init(allocator);
+    defer commit_data.deinit();
+
+    const commit_object_header = try loadObject(allocator, git_dir_path, commit_object_name, commit_data.writer());
+    if (commit_object_header.@"type" != .commit) {
+        return error.InvalidObjectType;
+    }
+
+    var tree: ?[20]u8 = null;
+    var parents = ObjectNameList.init(allocator);
+    var author: ?Commit.Committer = null;
+    var committer: ?Commit.Committer = null;
+
+    var lines = mem.split(u8, commit_data.items, "\n");
+
+    while (lines.next()) |line| {
+        if (mem.eql(u8, line, "")) {
+            break;
+        }
+        var words = mem.tokenize(u8, line, " ");
+        while (words.next()) |word| {
+            if (mem.eql(u8, word, "tree")) {
+                if (words.next()) |hex| {
+                    tree = try hexDigestToObjectName(hex);
+                } else {
+                    return error.InvalidTreeObjectName;
+                }
+
+            } else if (mem.eql(u8, word, "parent")) {
+                if (words.next()) |hex| {
+                    try parents.append(try hexDigestToObjectName(hex));
+                } else {
+                    return error.InvalidParentObjectName;
+                }
+
+            } else if (mem.eql(u8, word, "author")) {
+                author = try Commit.Committer.parse(allocator, words.rest());
+
+            } else if (mem.eql(u8, word, "committer")) {
+                committer = try Commit.Committer.parse(allocator, words.rest());
+            }
+        }
+    }
+
+    if (tree == null) {
+        return error.MissingTree;
+    }
+
+    if (author == null) {
+        return error.MissingAuthor;
+    }
+
+    if (committer == null) {
+        return error.MissingCommitter;
+    }
+
+    const message = try allocator.dupe(u8, lines.rest());
+
+    const commit = try allocator.create(Commit);
+
+    commit.* = Commit{
+        .allocator = allocator,
+        .tree = tree.?,
+        .parents = parents,
+        .author = author.?,
+        .committer = committer.?,
+        .message = message,
+    };
+
+    return commit;
+}
+
+pub fn hexDigestToObjectName(hash: []const u8) ![20]u8 {
+    var buffer: [20]u8 = undefined;
+    const output = try std.fmt.hexToBytes(&buffer, hash);
+    if (output.len != 20) {
+        return error.IncorrectLength;
+    }
+    return buffer;
+}
+
 pub const Commit = struct {
     allocator: mem.Allocator,
     tree: [20]u8,
@@ -966,11 +1072,51 @@ pub const Commit = struct {
     committer: Committer,
     message: []const u8,
 
+    pub fn deinit(self: *const Commit) void {
+        self.parents.deinit();
+        inline for (.{ self.author, self.committer }) |field| {
+            self.allocator.free(field.name);
+            self.allocator.free(field.email);
+        }
+        self.allocator.free(self.message);
+        self.allocator.destroy(self);
+    }
+
+    pub fn format(self: Commit, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
+        _ = fmt;
+        _ = options;
+
+        try out_stream.print("Commit{{\n", .{});
+        try out_stream.print("  Tree: {s}\n", .{ std.fmt.fmtSliceHexLower(&self.tree) });
+        for (self.parents.items) |parent| {
+            try out_stream.print("  Parent: {s}\n", .{ std.fmt.fmtSliceHexLower(&parent) });
+        }
+        try out_stream.print("  Author: {}\n", .{ self.author });
+        try out_stream.print("  Committer: {}\n", .{ self.committer });
+        try out_stream.print("  Message:\n    {s}}}\n", .{ self.message });
+    }
+
     pub const Committer = struct {
         name: []const u8,
         email: []const u8,
         time: i64,
         timezone: i16,
+
+        pub fn parse(allocator: mem.Allocator, line: []const u8) !Committer {
+            var email_split = mem.tokenize(u8, line, "<>");
+            const name = mem.trimRight(u8, email_split.next() orelse return error.InvalidCommitter, " ");
+            const email = email_split.next() orelse return error.InvalidCommitter;
+            var time_split = mem.tokenize(u8, email_split.rest(), " ");
+            const unix_time = time_split.next() orelse return error.InvalidCommitter;
+            const timezone = time_split.next() orelse return error.InvalidCommitter;
+
+            return .{
+                .name = try allocator.dupe(u8, name),
+                .email = try allocator.dupe(u8, email),
+                .time = try std.fmt.parseInt(i64, unix_time, 10),
+                .timezone = try std.fmt.parseInt(i16, timezone, 10),
+            };
+        }
 
         pub fn format(self: Committer, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
             _ = fmt;
