@@ -4,6 +4,8 @@ Implementing git structures and functions in pure zig.
 
 Still very much a work in progress. Some commands are redundant and some will get replaced.
 
+Doesn't support packed objects yet.
+
 ## Command
 
 The `zig-git` command currently supports the following subcommands:
