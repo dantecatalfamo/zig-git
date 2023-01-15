@@ -1149,45 +1149,13 @@ pub const Commit = struct {
 pub const ObjectNameList = std.ArrayList([20]u8);
 
 pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8,  ref: []const u8) !?[20]u8 {
-    const full_path = try refToPath(allocator, git_dir_path, ref);
-    defer allocator.free(full_path);
+    const current_ref = try readRef(allocator, git_dir_path, ref) orelse return null;
 
-    const file = fs.cwd().openFile(full_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return null,
-        else => return err,
-    };
-
-    defer file.close();
-
-    const data = try file.reader().readUntilDelimiterAlloc(allocator, '\n', 4096);
-    defer allocator.free(data);
-
-    if (mem.startsWith(u8, data, "ref: ")) {
-        const new_ref = data[5..];
+    switch (current_ref) {
         // TODO avoid infinite recursion on cyclical references
-        return resolveRef(allocator, git_dir_path, new_ref);
+        .ref => |ref_name| return try resolveRef(allocator, git_dir_path, ref_name),
+        .object_name => |object_name| return object_name,
     }
-
-    var object_name: [20]u8 = undefined;
-    _ = try std.fmt.hexToBytes(&object_name, data[0..40]);
-    return object_name;
-}
-
-/// Caller responsible for memory
-pub fn symbolicRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) !?[]const u8 {
-    const full_path = try refToPath(allocator, git_dir_path, ref);
-    defer allocator.free(full_path);
-
-    const file = try fs.cwd().openFile(full_path, .{});
-    defer file.close();
-
-    const data = try file.reader().readUntilDelimiterAlloc(allocator, '\n', 4096);
-    defer allocator.free(data);
-
-    if (!mem.startsWith(u8, data, "ref: ")) {
-        return null;
-    }
-    return try allocator.dupe(u8, data[5..]);
 }
 
 /// Caller responsible for memory
@@ -1268,9 +1236,17 @@ pub fn readRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const 
     }
 }
 
-/// Caller responsible for memory
+pub fn currentHead(allocator: mem.Allocator, git_dir_path: []const u8) !?Ref {
+    return readRef(allocator, git_dir_path, "HEAD");
+}
+
+/// Caller responsible for memory.
 pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const u8 {
-    return symbolicRef(allocator, git_dir_path, "HEAD");
+    const current_ref = try readRef(allocator, git_dir_path, "HEAD") orelse return null;
+    return switch (current_ref) {
+        .ref => |ref| ref,
+        .object_name => null,
+    };
 }
 
 pub fn currentHeadRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const u8 {
