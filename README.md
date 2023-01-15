@@ -1,4 +1,4 @@
-# Zig-git
+# zig-git
 
 Implementing git structures and functions in pure zig.
 
