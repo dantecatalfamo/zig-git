@@ -233,10 +233,7 @@ pub fn main() !void {
         std.debug.print("{s}\n", .{ repo_path });
 
     } else if (mem.eql(u8, subcommand, "read-ref")) {
-        const ref_name = args.next() orelse {
-            std.debug.print("No ref specified\n", .{});
-            return;
-        };
+        const ref_name = args.next();
 
         const repo_path = try findRepoRoot(allocator);
         defer allocator.free(repo_path);
@@ -244,10 +241,22 @@ pub fn main() !void {
         const git_dir_path = try repoToGitDir(allocator, repo_path);
         defer allocator.free(git_dir_path);
 
-        const ref = try readRef(allocator, git_dir_path, ref_name) orelse return;
-        defer ref.deinit(allocator);
+        if (ref_name) |valid_ref_name| {
+            const ref = try readRef(allocator, git_dir_path, valid_ref_name) orelse return;
+            defer ref.deinit(allocator);
 
-        std.debug.print("{any}\n", .{ ref });
+            std.debug.print("{}\n", .{ ref });
+        } else {
+            const ref_list = try listRefs(allocator, git_dir_path);
+            defer ref_list.deinit();
+
+            for (ref_list.refs) |ref_path| {
+                const ref = try readRef(allocator, git_dir_path, ref_path);
+                defer ref.?.deinit(allocator);
+
+                std.debug.print("{s}: {}\n", .{ ref_path, ref.? });
+            }
+        }
     }
 }
 
@@ -1296,9 +1305,12 @@ pub fn listRefs(allocator: mem.Allocator, git_dir_path: []const u8) !RefList {
         }
     }
 
+    var sorted_ref_list = try ref_list.toOwnedSlice();
+    std.sort.sort([]const u8, sorted_ref_list, {}, sortStrings);
+
     return .{
         .allocator = allocator,
-        .refs = try ref_list.toOwnedSlice(),
+        .refs = sorted_ref_list,
     };
 }
 
