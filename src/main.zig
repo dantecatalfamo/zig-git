@@ -712,6 +712,7 @@ pub const Tree = struct {
         for (self.entries) |entry| {
             entry.deinit(self.allocator);
         }
+        self.allocator.free(self.entries);
     }
 
     pub const Entry = struct {
@@ -1305,10 +1306,6 @@ pub const TreeWalker = struct {
 pub const TreeList = std.ArrayList(Tree);
 pub const IndexList = std.ArrayList(usize);
 pub const StringList = std.ArrayList([]const u8);
-
-// pub fn walkTree(allocator: mem.Allocator, git_dir_path: []const u8, tree_object_name: [20]u8) !TreeWalker {
-
-// }
 
 test "ref all" {
     std.testing.refAllDecls(@This());
