@@ -26,8 +26,8 @@ pub fn main() !void {
             \\init
             \\read-commit
             \\read-ref
+            \\read-tree
             \\refs
-            \\tree
             \\
             , .{});
         return;
@@ -185,7 +185,7 @@ pub fn main() !void {
             std.debug.print("{s}\n", .{ ref });
         }
 
-    } else if (mem.eql(u8, subcommand, "tree")) {
+    } else if (mem.eql(u8, subcommand, "read-tree")) {
         const tree_hash_digest = args.next() orelse {
             std.debug.print("No tree object name specified\n", .{});
             return;
