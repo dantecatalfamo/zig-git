@@ -25,6 +25,7 @@ pub fn main() !void {
             \\index
             \\init
             \\read-commit
+            \\read-ref
             \\refs
             \\tree
             \\
@@ -230,6 +231,23 @@ pub fn main() !void {
         defer allocator.free(repo_path);
 
         std.debug.print("{s}\n", .{ repo_path });
+
+    } else if (mem.eql(u8, subcommand, "read-ref")) {
+        const ref_name = args.next() orelse {
+            std.debug.print("No ref specified\n", .{});
+            return;
+        };
+
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        const git_dir_path = try repoToGitDir(allocator, repo_path);
+        defer allocator.free(git_dir_path);
+
+        const ref = try readRef(allocator, git_dir_path, ref_name) orelse return;
+        defer ref.deinit(allocator);
+
+        std.debug.print("{any}\n", .{ ref });
     }
 }
 
@@ -1211,7 +1229,44 @@ pub fn updateRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []cons
 pub const Ref = union(enum) {
     ref: []const u8,
     object_name: [20]u8,
+
+    pub fn deinit(self: Ref, allocator: mem.Allocator) void {
+        switch (self) {
+            .ref => allocator.free(self.ref),
+            else => {},
+        }
+    }
+
+    pub fn format(self: Ref, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
+        _ = fmt;
+        _ = options;
+
+        switch (self) {
+            .ref => |ref| try out_stream.print("{s}", .{ ref }),
+            .object_name => |object_name| try out_stream.print("{s}", .{ std.fmt.fmtSliceHexLower(&object_name) }),
+        }
+    }
 };
+
+pub fn readRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) !?Ref {
+    const ref_path = try refToPath(allocator, git_dir_path, ref);
+    defer allocator.free(ref_path);
+
+    const file = fs.cwd().openFile(ref_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.reader().readUntilDelimiterAlloc(allocator, '\n', 4096);
+    defer allocator.free(data);
+
+    if (mem.startsWith(u8, data, "ref: ")) {
+        return .{ .ref = try allocator.dupe(u8, data[5..]) };
+    } else {
+        return .{ .object_name = try hexDigestToObjectName(data[0..40]) };
+    }
+}
 
 /// Caller responsible for memory
 pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const u8 {
