@@ -652,6 +652,7 @@ pub const Index = struct {
 pub fn readTree(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !Tree {
     var entries = std.ArrayList(Tree.Entry).init(allocator);
     var object = std.ArrayList(u8).init(allocator);
+    defer object.deinit();
 
     const object_type = try loadObject(allocator, git_dir_path, object_name, object.writer());
     if (object_type.@"type" != .tree) {
@@ -1262,37 +1263,42 @@ pub const TreeWalker = struct {
 
         var buffer_alloc = std.heap.FixedBufferAllocator.init(&self.name_buffer);
 
-        // Invalidates path_stack pointers, figure that out
         try self.path_stack.append(orig_entry.path);
 
+        const entry_path = try fs.path.join(buffer_alloc.allocator(), self.path_stack.items );
         const entry = Tree.Entry{
             .mode = orig_entry.mode,
             .object_name = orig_entry.object_name,
-            .path = try fs.path.join(buffer_alloc.allocator(), self.path_stack.items ),
+            .path = entry_path,
         };
 
         _ = self.path_stack.pop();
 
         index_ptr.* += 1;
 
-        if (index_ptr.* == tree_ptr.entries.len) {
+        if (entry.mode.object_type == .tree) {
+            var new_tree = try readTree(self.allocator, self.git_dir_path, entry.object_name);
+            try self.tree_stack.append(new_tree);
+            try self.path_stack.append(try self.allocator.dupe(u8, orig_entry.path));
+            try self.index_stack.append(0);
+        }
+        while (self.tree_stack.items.len > 0 and self.endOfTree()) {
             const tree = self.tree_stack.pop();
             tree.deinit();
             _ = self.index_stack.pop();
             if (self.path_stack.items.len != 0) {
-                self.allocator.free(self.path_stack.pop());
+                const path = self.path_stack.pop();
+                self.allocator.free(path);
             }
         }
 
-        if (entry.mode.object_type == .tree) {
-            var new_tree = try readTree(self.allocator, self.git_dir_path, entry.object_name);
-            try self.tree_stack.append(new_tree);
-            try self.path_stack.append(try self.allocator.dupe(u8, entry.path));
-            try self.index_stack.append(0);
-        }
-
-        // do other things like increase index, pop tree, etc.
         return entry;
+    }
+
+    fn endOfTree(self: TreeWalker) bool {
+        const tree_ptr: *Tree = &self.tree_stack.items[self.tree_stack.items.len - 1];
+        const index_ptr: *usize = &self.index_stack.items[self.index_stack.items.len - 1];
+        return index_ptr.* == tree_ptr.entries.len;
     }
 };
 
