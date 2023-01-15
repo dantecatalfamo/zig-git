@@ -26,6 +26,7 @@ pub fn main() !void {
             \\init
             \\read-commit
             \\read-ref
+            \\read-tag
             \\read-tree
             \\refs
             \\
@@ -257,6 +258,24 @@ pub fn main() !void {
                 std.debug.print("{s}: {}\n", .{ ref_path, ref.? });
             }
         }
+    } else if (mem.eql(u8, subcommand, "read-tag")) {
+        const tag_name = args.next() orelse {
+            std.debug.print("No tag specified\n", .{});
+            return;
+        };
+
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        const git_dir_path = try repoToGitDir(allocator, repo_path);
+        defer allocator.free(git_dir_path);
+
+        const tag_object_name = try hexDigestToObjectName(tag_name);
+
+        const tag = try readTag(allocator, git_dir_path, tag_object_name);
+        defer tag.deinit();
+
+        std.debug.print("{}\n", .{ tag });
     }
 }
 
@@ -1030,52 +1049,29 @@ pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_obj
             break;
         }
         var words = mem.tokenize(u8, line, " ");
-        while (words.next()) |word| {
-            if (mem.eql(u8, word, "tree")) {
-                if (words.next()) |hex| {
-                    tree = try hexDigestToObjectName(hex);
-                } else {
-                    return error.InvalidTreeObjectName;
-                }
-
-            } else if (mem.eql(u8, word, "parent")) {
-                if (words.next()) |hex| {
-                    try parents.append(try hexDigestToObjectName(hex));
-                } else {
-                    return error.InvalidParentObjectName;
-                }
-
-            } else if (mem.eql(u8, word, "author")) {
-                author = try Commit.Committer.parse(allocator, words.rest());
-
-            } else if (mem.eql(u8, word, "committer")) {
-                committer = try Commit.Committer.parse(allocator, words.rest());
-            }
+        const key = words.next() orelse return error.InvalidCommitProperty;
+        if (mem.eql(u8, key, "tree")) {
+            const hex = words.next() orelse return error.InvalidTreeObjectName;
+            tree = try hexDigestToObjectName(hex);
+        } else if (mem.eql(u8, key, "parent")) {
+            const hex = words.next() orelse return error.InvalidParentObjectName;
+            try parents.append(try hexDigestToObjectName(hex));
+        } else if (mem.eql(u8, key, "author")) {
+            author = try Commit.Committer.parse(allocator, words.rest());
+        } else if (mem.eql(u8, key, "committer")) {
+            committer = try Commit.Committer.parse(allocator, words.rest());
         }
     }
 
-    if (tree == null) {
-        return error.MissingTree;
-    }
-
-    if (author == null) {
-        return error.MissingAuthor;
-    }
-
-    if (committer == null) {
-        return error.MissingCommitter;
-    }
-
     const message = try allocator.dupe(u8, lines.rest());
-
     const commit = try allocator.create(Commit);
 
     commit.* = Commit{
         .allocator = allocator,
-        .tree = tree.?,
+        .tree = tree orelse return error.MissingTree,
         .parents = parents,
-        .author = author.?,
-        .committer = committer.?,
+        .author = author orelse return error.MissingAuthor,
+        .committer = committer orelse return error.MissingCommitter,
         .message = message,
     };
 
@@ -1101,10 +1097,8 @@ pub const Commit = struct {
 
     pub fn deinit(self: *const Commit) void {
         self.parents.deinit();
-        inline for (.{ self.author, self.committer }) |field| {
-            self.allocator.free(field.name);
-            self.allocator.free(field.email);
-        }
+        self.author.deinit(self.allocator);
+        self.committer.deinit(self.allocator);
         self.allocator.free(self.message);
         self.allocator.destroy(self);
     }
@@ -1128,6 +1122,11 @@ pub const Commit = struct {
         email: []const u8,
         time: i64,
         timezone: i16,
+
+        pub fn deinit(self: Committer, allocator: mem.Allocator) void {
+            allocator.free(self.name);
+            allocator.free(self.email);
+        }
 
         pub fn parse(allocator: mem.Allocator, line: []const u8) !Committer {
             var email_split = mem.tokenize(u8, line, "<>");
@@ -1489,6 +1488,77 @@ pub const TreeWalker = struct {
 pub const TreeList = std.ArrayList(Tree);
 pub const IndexList = std.ArrayList(usize);
 pub const StringList = std.ArrayList([]const u8);
+
+pub fn readTag(allocator: mem.Allocator, git_dir_path: []const u8, tag_object_name: [20]u8) !Tag {
+    var tag_data = std.ArrayList(u8).init(allocator);
+    defer tag_data.deinit();
+
+    const object_header = try loadObject(allocator, git_dir_path, tag_object_name, tag_data.writer());
+    if (object_header.@"type" != .tag) {
+        return error.IncorrectObjectType;
+    }
+
+    var object_name: ?[20]u8 = null;
+    var tag_type: ?ObjectType = null;
+    var tag_tag: ?[]const u8 = null;
+    var tagger: ?Commit.Committer = null;
+
+    var lines = mem.split(u8, tag_data.items, "\n");
+    while (lines.next()) |line| {
+        if (mem.eql(u8, line, "")) {
+            break;
+        }
+        var words = mem.tokenize(u8, line, " ");
+        const key = words.next() orelse return error.InvalidTagProperty;
+
+        if (mem.eql(u8, key, "object")) {
+            const hex = words.next() orelse return error.InvalidObjectName;
+            object_name = try hexDigestToObjectName(hex);
+        } else if (mem.eql(u8, key, "type")) {
+            const obj_type = words.next() orelse return error.InvalidObjectType;
+            tag_type = std.meta.stringToEnum(ObjectType, obj_type) orelse return error.InvalidObjectType;
+        } else if (mem.eql(u8, key, "tag")) {
+            const tag_name = words.next() orelse return error.InvalidTagName;
+            tag_tag = try allocator.dupe(u8, tag_name);
+        } else if (mem.eql(u8, key, "tagger")) {
+            const tag_tagger = words.rest();
+            tagger = try Commit.Committer.parse(allocator, tag_tagger);
+        }
+    }
+
+    const message = try allocator.dupe(u8, lines.rest());
+
+    return Tag{
+        .allocator = allocator,
+        .object_name = object_name orelse return error.InvalidObjectName,
+        .@"type" = tag_type orelse return error.InvalidObjectType,
+        .tag = tag_tag orelse return error.InvalidTagName,
+        .tagger = tagger orelse return error.InvalidTagger,
+        .message = message,
+    };
+}
+
+pub const Tag = struct {
+    allocator: mem.Allocator,
+    object_name: [20]u8,
+    @"type": ObjectType,
+    tag: []const u8,
+    tagger: Commit.Committer,
+    message: []const u8,
+
+    pub fn deinit(self: Tag) void {
+        self.allocator.free(self.tag);
+        self.tagger.deinit(self.allocator);
+        self.allocator.free(self.message);
+    }
+
+    pub fn format(self: Tag, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try out_stream.print("Tag{{ object_name: {s}, type: {s}, tag: {s}, tagger: {}, message: \"{s}\" }}",
+                             .{ std.fmt.fmtSliceHexLower(&self.object_name), @tagName(self.@"type"), self.tag, self.tagger, self.message });
+    }
+};
 
 test "ref all" {
     std.testing.refAllDecls(@This());
