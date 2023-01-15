@@ -114,7 +114,7 @@ pub fn main() !void {
             .message = "Second commit test!",
         };
 
-        const object_name = try writeCommit(allocator, repo_root, commit);
+        const object_name = try writeCommit(allocator, git_dir_path, commit);
 
         if (try currentRef(allocator, git_dir_path)) |current_ref| {
             defer allocator.free(current_ref);
@@ -938,7 +938,7 @@ pub fn repoToGitDir(allocator: mem.Allocator, repo_path: []const u8) ![]const u8
     return try fs.path.join(allocator, &.{ repo_path, ".git" });
 }
 
-pub fn writeCommit(allocator: mem.Allocator, repo_path: []const u8, commit: Commit) ![20]u8 {
+pub fn writeCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit: Commit) ![20]u8 {
     var commit_data = std.ArrayList(u8).init(allocator);
     defer commit_data.deinit();
 
@@ -954,9 +954,6 @@ pub fn writeCommit(allocator: mem.Allocator, repo_path: []const u8, commit: Comm
     try writer.print("committer {}\n", .{ committer });
 
     try writer.print("\n{s}\n", .{ commit.message });
-
-    const git_dir_path = try repoToGitDir(allocator, repo_path);
-    defer allocator.free(git_dir_path);
 
     return saveObject(allocator, git_dir_path, commit_data.items, .commit);
 }
