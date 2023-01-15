@@ -18,15 +18,15 @@ pub fn main() !void {
         std.debug.print(
             \\No subcommand specified.
             \\Available subcommands:
-            \\read-commit
-            \\tree
             \\add
             \\branch
             \\branch-create
             \\commit
             \\index
             \\init
+            \\read-commit
             \\refs
+            \\tree
             \\
             , .{});
         return;
@@ -1219,14 +1219,11 @@ pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const 
 }
 
 pub fn currentHeadRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const u8 {
-    const current_ref = try currentRef(allocator, git_dir_path);
-    if (current_ref == null) {
-        return null;
-    }
+    const current_ref = try currentRef(allocator, git_dir_path) orelse return null;
 
-    defer allocator.free(current_ref.?);
+    defer allocator.free(current_ref);
 
-    const current_head_ref = std.mem.trimLeft(u8, current_ref.?, "refs/heads/");
+    const current_head_ref = std.mem.trimLeft(u8, current_ref, "refs/heads/");
     return try allocator.dupe(u8, current_head_ref);
 }
 
