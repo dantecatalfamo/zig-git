@@ -4,7 +4,9 @@ Implementing git structures and functions in pure zig.
 
 Still very much a work in progress. Some commands are redundant and some will get replaced.
 
-Doesn't support packed objects yet.
+This project is primarily for learning purposes and not meant to be a replacement for something like libgit2.
+
+It doesn't support packed objects yet.
 
 ## Command
 
