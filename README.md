@@ -14,9 +14,10 @@ The `zig-git` command currently supports the following subcommands:
 * `add <target>` - Add a file or directory to the git index
 * `branch` - List current branches (`refs/heads/`) in a format similar to `git branch`
 * `branch-create <name>` - Create a new branch from the current branch
-* `commit` - Commit the current index
+* `commit` - Commit the current index (as a test, doesn't use correct information)
 * `index` - List out the content of the index
 * `init [directory]` - Create a new git repository
+* `log` - List the last commit
 * `read-commit <hash>` - Parse and display a commit
 * `read-ref [ref]` - Display a ref and what it points to, or all refs if no argument is given
 * `read-tag [ref]` - Parse and display a tag
