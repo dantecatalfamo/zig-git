@@ -39,7 +39,13 @@ pub fn main() !void {
         defer allocator.free(repo_root);
 
         std.debug.print("Repo root: {s}\n", .{ repo_root });
-        const index = try readIndex(allocator, repo_root);
+        const index = readIndex(allocator, repo_root) catch |err| switch (err) {
+            error.FileNotFound => {
+                std.debug.print("No index\n", .{});
+                return;
+            },
+            else => return err,
+        };
         std.debug.print("Signature: {s}\nNum Entries: {d}\nVersion: {d}\n", .{ index.header.signature, index.header.entries, index.header.version });
         for (index.entries.items) |entry| {
             std.debug.print("{}\n", .{ entry });
