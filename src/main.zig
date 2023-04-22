@@ -24,6 +24,7 @@ pub fn main() !void {
             \\commit
             \\index
             \\init
+            \\log
             \\read-commit
             \\read-ref
             \\read-tag
@@ -283,7 +284,20 @@ pub fn main() !void {
 
         std.debug.print("{}\n", .{ tag });
     } else if (mem.eql(u8, subcommand, "log")) {
-        // TODO simple git log
+        // TODO list more than one commit in the log
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        const git_dir_path = try repoToGitDir(allocator, repo_path);
+        defer allocator.free(git_dir_path);
+
+        const commit_object_name = try resolveHead(allocator, git_dir_path) orelse return;
+        const commit = try readCommit(allocator, git_dir_path, commit_object_name);
+        defer commit.deinit();
+
+        std.debug.print("{}\n", .{commit});
+    } else if (mem.eql(u8, subcommand, "status")) {
+        // TODO simple status (branch name for now)
     }
 }
 
@@ -1183,6 +1197,11 @@ pub const Commit = struct {
 
 pub const ObjectNameList = std.ArrayList([20]u8);
 
+/// Recursively resolves the HEAD until an object name is found.
+pub fn resolveHead(allocator: mem.Allocator, git_dir_path: []const u8) !?[20]u8 {
+    return try resolveRef(allocator, git_dir_path, "HEAD");
+}
+
 /// Recursively resolves refs until an object name is found.
 pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8,  ref: []const u8) !?[20]u8 {
     const current_ref = try readRef(allocator, git_dir_path, ref) orelse return null;
@@ -1296,7 +1315,6 @@ pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const 
         .object_name => null,
     };
 }
-
 
 /// Returns the name of the current head ref (branch name)
 pub fn currentHeadRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const u8 {
