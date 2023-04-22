@@ -282,9 +282,12 @@ pub fn main() !void {
         defer tag.deinit();
 
         std.debug.print("{}\n", .{ tag });
+    } else if (mem.eql(u8, subcommand, "log")) {
+        // TODO simple git log
     }
 }
 
+/// Initialize a normal git repo
 pub fn initialize(allocator: mem.Allocator, repo_path: []const u8) !void {
     const bare_path = try fs.path.join(allocator, &.{ repo_path, ".git" });
     defer allocator.free(bare_path);
@@ -293,6 +296,7 @@ pub fn initialize(allocator: mem.Allocator, repo_path: []const u8) !void {
     try initializeBare(allocator, bare_path);
 }
 
+/// Initialize a bare git repo (no index or working directory)
 pub fn initializeBare(allocator: mem.Allocator, repo_path: []const u8) !void {
     try fs.cwd().makeDir(repo_path);
     inline for (.{ "objects", "refs", "refs/heads" }) |dir| {
@@ -308,6 +312,7 @@ pub fn initializeBare(allocator: mem.Allocator, repo_path: []const u8) !void {
     defer head.close();
 }
 
+/// Hashes data and returns its object name
 pub fn hashObject(data: []const u8, obj_type: ObjectType, digest: *[20]u8) void {
     var hash = std.crypto.hash.Sha1.init(.{});
     const writer = hash.writer();
@@ -317,6 +322,7 @@ pub fn hashObject(data: []const u8, obj_type: ObjectType, digest: *[20]u8) void 
 }
 
 // TODO Maybe rewrite to use a reader interface instead of a data slice
+/// Writes data to an object and returns its object name
 pub fn saveObject(allocator: mem.Allocator, git_dir_path: []const u8, data: []const u8, obj_type: ObjectType) ![20]u8 {
     var digest: [20]u8 = undefined;
     hashObject(data, obj_type, &digest);
@@ -342,6 +348,7 @@ pub fn saveObject(allocator: mem.Allocator, git_dir_path: []const u8, data: []co
     return digest;
 }
 
+/// Returns a reader for an object's data
 pub fn objectReader(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !ObjectReader {
     return ObjectReader.init(allocator, git_dir_path, object_name);
 }
@@ -400,6 +407,7 @@ pub const ObjectReader = struct {
     }
 };
 
+/// Returns the data for an object
 pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8, writer: anytype) !ObjectHeader {
     var object_reader = try objectReader(allocator, git_dir_path, object_name);
     defer object_reader.deinit();
@@ -424,6 +432,7 @@ pub const ObjectType = enum {
     tag,
 };
 
+/// Returns a repo's current index
 pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
     const index_path = try fs.path.join(allocator, &.{ repo_path, ".git", "index" });
     defer allocator.free(index_path);
@@ -527,6 +536,7 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
     return index;
 }
 
+/// Writes the index to the repo's git folder
 pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: *const Index) !void {
     const index_path = try fs.path.join(allocator, &.{ repo_path, ".git", "index" });
     defer allocator.free(index_path);
@@ -760,6 +770,7 @@ pub fn readTree(allocator: mem.Allocator, git_dir_path: []const u8, object_name:
     };
 }
 
+/// Writes a tree to an object and returns the name
 pub fn writeTree(allocator: mem.Allocator, git_dir_path: []const u8, tree: Tree) ![20]u8 {
     var tree_data = std.ArrayList(u8).init(allocator);
     defer tree_data.deinit();
@@ -812,6 +823,8 @@ pub const Tree = struct {
     pub const EntryList = std.ArrayList(Tree.Entry);
 };
 
+/// Transforms an Index into a tree object and stores it. Returns the
+/// object's name
 pub fn indexToTree(child_allocator: mem.Allocator, repo_path: []const u8) ![20]u8 {
     var arena = std.heap.ArenaAllocator.init(child_allocator);
     defer arena.deinit();
@@ -857,7 +870,8 @@ pub fn indexToTree(child_allocator: mem.Allocator, repo_path: []const u8) ![20]u
     return root.toTree(git_dir_path);
 }
 
-
+/// Represents a nested git tree (trees are flat with references to
+/// other trees)
 const NestedTree = struct {
     allocator: mem.Allocator,
     entries: Tree.EntryList,
@@ -908,6 +922,7 @@ const NestedTree = struct {
 
 const NestedTreeList = std.ArrayList(NestedTree);
 
+/// Recursively add files to an index
 pub fn addFilesToIndex(allocator: mem.Allocator, repo_path: []const u8, index: *Index, dir_path: []const u8) !void {
     var dir_iterable = try fs.cwd().openIterableDir(dir_path, .{});
     defer dir_iterable.close();
@@ -928,6 +943,7 @@ pub fn addFilesToIndex(allocator: mem.Allocator, repo_path: []const u8, index: *
     }
 }
 
+/// Add the file at the path to an index
 pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, index: *Index, file_path: []const u8) !void {
     const entry = try fileToIndexEntry(allocator, repo_path, file_path);
     errdefer entry.deinit(allocator);
@@ -960,6 +976,7 @@ pub fn addFileToIndex(allocator: mem.Allocator, repo_path: []const u8, index: *I
     }
 }
 
+/// Reads file's details and returns a matching Index.Entry
 pub fn fileToIndexEntry(allocator: mem.Allocator, repo_path: []const u8, file_path: []const u8) !Index.Entry {
     const file = try fs.cwd().openFile(file_path, .{});
     const stat = try os.fstat(file.handle);
@@ -1010,10 +1027,12 @@ pub fn fileToIndexEntry(allocator: mem.Allocator, repo_path: []const u8, file_pa
     return entry;
 }
 
+/// Returns a repo's .git directory path
 pub fn repoToGitDir(allocator: mem.Allocator, repo_path: []const u8) ![]const u8 {
     return try fs.path.join(allocator, &.{ repo_path, ".git" });
 }
 
+/// Writes a commit object and returns its name
 pub fn writeCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit: Commit) ![20]u8 {
     var commit_data = std.ArrayList(u8).init(allocator);
     defer commit_data.deinit();
@@ -1034,6 +1053,7 @@ pub fn writeCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit: C
     return saveObject(allocator, git_dir_path, commit_data.items, .commit);
 }
 
+/// Returns a Commit with a certain object name
 pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_object_name: [20]u8) !*Commit {
     var commit_data = std.ArrayList(u8).init(allocator);
     defer commit_data.deinit();
@@ -1084,6 +1104,7 @@ pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_obj
     return commit;
 }
 
+/// Returns the binary object name for a given hex string
 pub fn hexDigestToObjectName(hash: []const u8) ![20]u8 {
     var buffer: [20]u8 = undefined;
     const output = try std.fmt.hexToBytes(&buffer, hash);
@@ -1162,6 +1183,7 @@ pub const Commit = struct {
 
 pub const ObjectNameList = std.ArrayList([20]u8);
 
+/// Recursively resolves refs until an object name is found.
 pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8,  ref: []const u8) !?[20]u8 {
     const current_ref = try readRef(allocator, git_dir_path, ref) orelse return null;
 
@@ -1175,6 +1197,7 @@ pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8,  ref: []co
     }
 }
 
+/// Returns the filesystem path to a ref
 /// Caller responsible for memory
 pub fn refToPath(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) ![]const u8 {
     const full_ref = try expandRef(allocator, ref);
@@ -1183,6 +1206,7 @@ pub fn refToPath(allocator: mem.Allocator, git_dir_path: []const u8, ref: []cons
     return fs.path.join(allocator, &.{ git_dir_path, full_ref });
 }
 
+/// Returns the full expanded name of a ref
 /// Caller responsible for memory
 pub fn expandRef(allocator: mem.Allocator, ref: []const u8) ![]const u8 {
     if (mem.eql(u8, ref, "HEAD") or mem.startsWith(u8, ref, "refs/")) {
@@ -1193,6 +1217,7 @@ pub fn expandRef(allocator: mem.Allocator, ref: []const u8) ![]const u8 {
     return error.InvalidRef;
 }
 
+/// Updates the target for a ref
 pub fn updateRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8, target: Ref) !void {
     const full_path = try refToPath(allocator, git_dir_path, ref);
     defer allocator.free(full_path);
@@ -1211,6 +1236,8 @@ pub fn updateRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []cons
     }
 }
 
+/// Represents a git ref. Either an object name or a pointer to
+/// another ref
 pub const Ref = union(enum) {
     ref: []const u8,
     object_name: [20]u8,
@@ -1233,6 +1260,7 @@ pub const Ref = union(enum) {
     }
 };
 
+/// Returns the target of a ref
 pub fn readRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) !?Ref {
     const ref_path = try refToPath(allocator, git_dir_path, ref);
     defer allocator.free(ref_path);
@@ -1253,10 +1281,13 @@ pub fn readRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const 
     }
 }
 
+/// Returns the current HEAD ref
 pub fn currentHead(allocator: mem.Allocator, git_dir_path: []const u8) !?Ref {
     return readRef(allocator, git_dir_path, "HEAD");
 }
 
+/// Returns the current HEAD ref, only if it's the name of another
+/// ref. Retruns null if it's anything else
 /// Caller responsible for memory.
 pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const u8 {
     const current_ref = try readRef(allocator, git_dir_path, "HEAD") orelse return null;
@@ -1266,6 +1297,8 @@ pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const 
     };
 }
 
+
+/// Returns the name of the current head ref (branch name)
 pub fn currentHeadRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const u8 {
     const current_ref = try currentRef(allocator, git_dir_path) orelse return null;
 
@@ -1275,6 +1308,7 @@ pub fn currentHeadRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]co
     return try allocator.dupe(u8, current_head_ref);
 }
 
+/// Returns a list of all head ref names (branch names)
 pub fn listHeadRefs(allocator: mem.Allocator, git_dir_path: []const u8) !RefList {
     const refs_path = try fs.path.join(allocator, &.{ git_dir_path, "refs", "heads" });
     defer allocator.free(refs_path);
@@ -1291,6 +1325,7 @@ pub fn listHeadRefs(allocator: mem.Allocator, git_dir_path: []const u8) !RefList
     };
 }
 
+/// Returns a list of all ref names, including heads, remotes, and tags
 pub fn listRefs(allocator: mem.Allocator, git_dir_path: []const u8) !RefList {
     const refs_path = try fs.path.join(allocator, &.{ git_dir_path, "refs" });
     defer allocator.free(refs_path);
@@ -1322,6 +1357,7 @@ pub fn listRefs(allocator: mem.Allocator, git_dir_path: []const u8) !RefList {
     };
 }
 
+/// A list of ref names (strings)
 pub const RefList = struct {
     allocator: mem.Allocator,
     refs: [][]const u8,
@@ -1339,6 +1375,7 @@ pub fn sortStrings(context: void, lhs: []const u8, rhs: []const u8) bool {
     return mem.lessThan(u8, lhs, rhs);
 }
 
+/// Restores the contents of a file from an object
 pub fn restoreFileFromObject(allocator: mem.Allocator, git_dir_path: []const u8, path: []const u8, object_name: [20]u8) !ObjectHeader {
     const file = try fs.cwd().createFile(path, .{});
     defer file.close();
@@ -1347,6 +1384,7 @@ pub fn restoreFileFromObject(allocator: mem.Allocator, git_dir_path: []const u8,
     return try loadObject(allocator, git_dir_path, object_name, writer);
 }
 
+/// TODO Restores the contents of a file from a commit and a path
 pub fn restoreFileFromCommit(allocator: mem.Allocator, git_dir_path: []const u8, path: []const u8) !void {
     _ = git_dir_path;
     _ = allocator;
@@ -1354,6 +1392,7 @@ pub fn restoreFileFromCommit(allocator: mem.Allocator, git_dir_path: []const u8,
     defer file.close();
 }
 
+/// Returns the object that contains the file at a path in a tree
 pub fn entryFromTree(allocator: mem.Allocator, git_dir_path: []const u8, tree_object_name: [20]u8, path: []const u8) ![20]u8 {
     var path_iter = mem.split(u8, path, fs.path.sep_str);
     var tree_stack = std.ArrayList(Tree).init(allocator);
@@ -1401,10 +1440,12 @@ pub fn entryFromTree(allocator: mem.Allocator, git_dir_path: []const u8, tree_ob
     return error.NoFileInTree;
 }
 
+/// Returns a TreeWalker
 pub fn walkTree(allocator: mem.Allocator, git_dir_path: []const u8, tree_object_name: [20]u8) !TreeWalker {
     return TreeWalker.init(allocator, git_dir_path, tree_object_name);
 }
 
+/// Iterates over the contents of a tree
 pub const TreeWalker = struct {
     allocator: mem.Allocator,
     tree_stack: TreeList,
@@ -1498,6 +1539,7 @@ pub const TreeList = std.ArrayList(Tree);
 pub const IndexList = std.ArrayList(usize);
 pub const StringList = std.ArrayList([]const u8);
 
+/// Returns a Tag with a certain name
 pub fn readTag(allocator: mem.Allocator, git_dir_path: []const u8, tag_object_name: [20]u8) !Tag {
     var tag_data = std.ArrayList(u8).init(allocator);
     defer tag_data.deinit();
@@ -1546,6 +1588,8 @@ pub fn readTag(allocator: mem.Allocator, git_dir_path: []const u8, tag_object_na
         .message = message,
     };
 }
+
+// TODO writeTag
 
 pub const Tag = struct {
     allocator: mem.Allocator,
