@@ -30,6 +30,7 @@ pub fn main() !void {
             \\read-tag
             \\read-tree
             \\refs
+            \\status
             \\
             , .{});
         return;
@@ -297,7 +298,23 @@ pub fn main() !void {
 
         std.debug.print("{}\n", .{commit});
     } else if (mem.eql(u8, subcommand, "status")) {
-        // TODO simple status (branch name for now)
+        // TODO Give more useful status information
+
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        const git_dir_path = try repoToGitDir(allocator, repo_path);
+        defer allocator.free(git_dir_path);
+
+        const current_ref = try currentHead(allocator, git_dir_path);
+        if (current_ref) |valid_ref| {
+            defer valid_ref.deinit(allocator);
+
+            switch (valid_ref) {
+                .ref => |ref| std.debug.print("On branch {s}\n", .{ std.mem.trimLeft(u8, ref, "refs/heads/") }),
+                .object_name => |object_name| std.debug.print("Detached HEAD {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) }),
+            }
+        }
     }
 }
 
@@ -1300,12 +1317,12 @@ pub fn readRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const 
     }
 }
 
-/// Returns the current HEAD ref
+/// Returns the current HEAD Ref
 pub fn currentHead(allocator: mem.Allocator, git_dir_path: []const u8) !?Ref {
     return readRef(allocator, git_dir_path, "HEAD");
 }
 
-/// Returns the current HEAD ref, only if it's the name of another
+/// Returns the full current HEAD ref, only if it's the name of another
 /// ref. Retruns null if it's anything else
 /// Caller responsible for memory.
 pub fn currentRef(allocator: mem.Allocator, git_dir_path: []const u8) !?[]const u8 {
