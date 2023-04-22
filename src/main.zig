@@ -1161,7 +1161,10 @@ pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8,  ref: []co
 
     switch (current_ref) {
         // TODO avoid infinite recursion on cyclical references
-        .ref => |ref_name| return try resolveRef(allocator, git_dir_path, ref_name),
+        .ref => |ref_name| {
+            defer current_ref.deinit(allocator);
+            return try resolveRef(allocator, git_dir_path, ref_name);
+        },
         .object_name => |object_name| return object_name,
     }
 }
