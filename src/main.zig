@@ -106,7 +106,7 @@ pub fn main() !void {
             .name = "Gaba Goul",
             .email = "gaba@cool.ca",
             .time = std.time.timestamp(),
-            .timezone = 1,
+            .timezone = 0,
         };
         var parents = ObjectNameList.init(allocator);
         defer parents.deinit();
@@ -122,7 +122,7 @@ pub fn main() !void {
             .parents = parents,
             .author = committer,
             .committer = committer,
-            .message = "Second commit test!",
+            .message = "Commit test!",
         };
 
         const object_name = try writeCommit(allocator, git_dir_path, commit);
