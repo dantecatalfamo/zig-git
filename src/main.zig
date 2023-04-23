@@ -1139,7 +1139,12 @@ pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_obj
         if (in_pgp and mem.indexOf(u8, line, "-----END PGP SIGNATURE-----") != null) {
             try pgp_signature.?.appendSlice(line);
             in_pgp = false;
-            _ = lines.next(); // PGP signatures have a trailing empty line
+            // PGP signatures seem to have a trailing line wite space
+            const trailing_line = lines.next() orelse return error.MissingTrailingPGPLine;
+            if (!mem.eql(u8, trailing_line, " ")) {
+                std.debug.print("Trailing PGP line: \"{s}\"\n", .{ trailing_line });
+                return error.TrailingPGPLineNotEmpty;
+            }
             continue;
         }
         if (in_pgp) {
