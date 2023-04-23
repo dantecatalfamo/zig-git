@@ -285,7 +285,6 @@ pub fn main() !void {
 
         std.debug.print("{}\n", .{ tag });
     } else if (mem.eql(u8, subcommand, "log")) {
-        // TODO list more than one commit in the log
         const repo_path = try findRepoRoot(allocator);
         defer allocator.free(repo_path);
 
@@ -304,7 +303,7 @@ pub fn main() !void {
             std.debug.print("{}\n", .{valid_commit});
             if (valid_commit.parents.items.len >= 1) {
                 // HACK We only look at the first parent, we should
-                // look at all (for mergers, etc.)
+                // look at all (for merges, etc.)
                 commit = try readCommit(allocator, git_dir_path, valid_commit.parents.items[0]);
             } else {
                 commit = null;
