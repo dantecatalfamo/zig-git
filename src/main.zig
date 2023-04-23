@@ -303,6 +303,8 @@ pub fn main() !void {
 
             std.debug.print("{}\n", .{valid_commit});
             if (valid_commit.parents.items.len >= 1) {
+                // HACK We only look at the first parent, we should
+                // look at all (for mergers, etc.)
                 commit = try readCommit(allocator, git_dir_path, valid_commit.parents.items[0]);
             } else {
                 commit = null;
@@ -1110,6 +1112,7 @@ pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_obj
     var parents = ObjectNameList.init(allocator);
     var author: ?Commit.Committer = null;
     var committer: ?Commit.Committer = null;
+    var pgp_signature: ?std.ArrayList(u8) = null;
 
     errdefer {
         parents.deinit();
@@ -1119,16 +1122,34 @@ pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_obj
         if (committer) |valid_committer| {
             valid_committer.deinit(allocator);
         }
+        if (pgp_signature) |sig| {
+            sig.deinit();
+        }
     }
 
     var lines = mem.split(u8, commit_data.items, "\n");
+    var in_pgp = false;
 
     while (lines.next()) |line| {
         if (mem.eql(u8, line, "")) {
             break;
         }
+        if (in_pgp and mem.indexOf(u8, line, "-----END PGP SIGNATURE-----") != null) {
+            try pgp_signature.?.appendSlice(line);
+            in_pgp = false;
+            _ = lines.next(); // PGP signatures have a trailing empty line
+            continue;
+        }
+        if (in_pgp) {
+            try pgp_signature.?.appendSlice(line);
+            try pgp_signature.?.append('\n');
+            continue;
+        }
         var words = mem.tokenize(u8, line, " ");
-        const key = words.next() orelse return error.InvalidCommitProperty;
+        const key = words.next() orelse {
+            std.debug.print("commit data:\n{s}\n", .{ commit_data.items });
+            return error.MissingCommitPropertyKey;
+        };
         if (mem.eql(u8, key, "tree")) {
             const hex = words.next() orelse return error.InvalidTreeObjectName;
             tree = try hexDigestToObjectName(hex);
@@ -1139,6 +1160,10 @@ pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_obj
             author = try Commit.Committer.parse(allocator, words.rest());
         } else if (mem.eql(u8, key, "committer")) {
             committer = try Commit.Committer.parse(allocator, words.rest());
+        } else if (mem.eql(u8, key, "gpgsig")) {
+            in_pgp = true;
+            pgp_signature = std.ArrayList(u8).init(allocator);
+            try pgp_signature.?.appendSlice(words.rest());
         }
     }
 
@@ -1154,6 +1179,7 @@ pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_obj
         .author = author orelse return error.MissingAuthor,
         .committer = committer orelse return error.MissingCommitter,
         .message = message,
+        .pgp_signature = if (pgp_signature) |*sig| try sig.toOwnedSlice() else null,
     };
 
     return commit;
@@ -1176,12 +1202,16 @@ pub const Commit = struct {
     author: Committer,
     committer: Committer,
     message: []const u8,
+    pgp_signature: ?[]const u8 = null,
 
     pub fn deinit(self: *const Commit) void {
         self.parents.deinit();
         self.author.deinit(self.allocator);
         self.committer.deinit(self.allocator);
         self.allocator.free(self.message);
+        if (self.pgp_signature) |sig| {
+            self.allocator.free(sig);
+        }
         self.allocator.destroy(self);
     }
 
@@ -1196,7 +1226,11 @@ pub const Commit = struct {
         }
         try out_stream.print("  Author: {}\n", .{ self.author });
         try out_stream.print("  Committer: {}\n", .{ self.committer });
-        try out_stream.print("  Message:\n    {s}}}\n", .{ self.message });
+        try out_stream.print("  Message: {s}\n", .{ self.message });
+        if (self.pgp_signature) |sig| {
+            try out_stream.print("  PGP Signature:\n{s}\n", .{ sig });
+        }
+        try out_stream.print("}}\n", .{});
     }
 
     pub const Committer = struct {
