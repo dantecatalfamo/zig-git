@@ -30,6 +30,7 @@ pub fn main() !void {
             \\read-tag
             \\read-tree
             \\refs
+            \\rm
             \\status
             \\
             , .{});
@@ -331,6 +332,24 @@ pub fn main() !void {
                 .object_name => |object_name| std.debug.print("Detached HEAD {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) }),
             }
         }
+    } else if (mem.eql(u8, subcommand, "rm")) {
+        const file_path = blk: {
+            if (args.next()) |valid_path| {
+                break :blk valid_path;
+            }
+            std.debug.print("Must specify file path\n", .{});
+            return error.NoFilePath;
+        };
+
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        var index = try readIndex(allocator, repo_path);
+        defer index.deinit();
+
+        try removeFileFromIndex(allocator, repo_path, index, file_path);
+
+        try writeIndex(allocator, repo_path, index);
     }
 }
 
@@ -1072,6 +1091,29 @@ pub fn fileToIndexEntry(allocator: mem.Allocator, repo_path: []const u8, file_pa
     };
 
     return entry;
+}
+
+pub fn removeFileFromIndex(allocator: mem.Allocator, repo_path: []const u8, index: *Index, file_path: []const u8) !void {
+    const absolute_repo_path = try fs.cwd().realpathAlloc(allocator, repo_path);
+    defer allocator.free(absolute_repo_path);
+    const absolute_file_path = try fs.cwd().realpathAlloc(allocator, file_path);
+    defer allocator.free(absolute_file_path);
+    const repo_relative_path = try fs.path.relative(allocator, absolute_repo_path, absolute_file_path);
+    defer allocator.free(repo_relative_path);
+
+    var removed = false;
+    for (index.entries.items, 0..) |entry, idx| {
+        if (mem.eql(u8, entry.path, repo_relative_path)) {
+            const removed_entry = index.entries.orderedRemove(idx);
+            removed_entry.deinit(index.entries.allocator);
+            removed = true;
+            break;
+        }
+    }
+
+    if (!removed) {
+        return error.FileNotInIndex;
+    }
 }
 
 /// Returns a repo's .git directory path

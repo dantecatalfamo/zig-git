@@ -23,4 +23,5 @@ The `zig-git` command currently supports the following subcommands:
 * `read-tag [ref]` - Parse and display a tag
 * `read-tree` - Parse and display the all files in a tree
 * `refs` - List all refs
+* `rm` - Remove file from index
 * `status` - Branch status
