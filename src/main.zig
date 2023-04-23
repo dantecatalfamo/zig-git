@@ -293,10 +293,22 @@ pub fn main() !void {
         defer allocator.free(git_dir_path);
 
         const commit_object_name = try resolveHead(allocator, git_dir_path) orelse return;
-        const commit = try readCommit(allocator, git_dir_path, commit_object_name);
-        defer commit.deinit();
 
-        std.debug.print("{}\n", .{commit});
+        var commit: ?*Commit = null;
+        commit = try readCommit(allocator, git_dir_path, commit_object_name);
+
+        while (commit) |valid_commit| {
+            const old_commit = valid_commit;
+            defer old_commit.deinit();
+
+            std.debug.print("{}\n", .{valid_commit});
+            if (valid_commit.parents.items.len >= 1) {
+                commit = try readCommit(allocator, git_dir_path, valid_commit.parents.items[0]);
+            } else {
+                commit = null;
+            }
+        }
+
     } else if (mem.eql(u8, subcommand, "status")) {
         // TODO Give more useful status information
 
@@ -1099,6 +1111,16 @@ pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_obj
     var author: ?Commit.Committer = null;
     var committer: ?Commit.Committer = null;
 
+    errdefer {
+        parents.deinit();
+        if (author) |valid_author| {
+            valid_author.deinit(allocator);
+        }
+        if (committer) |valid_committer| {
+            valid_committer.deinit(allocator);
+        }
+    }
+
     var lines = mem.split(u8, commit_data.items, "\n");
 
     while (lines.next()) |line| {
@@ -1121,7 +1143,9 @@ pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_obj
     }
 
     const message = try allocator.dupe(u8, lines.rest());
+    errdefer allocator.free(message);
     const commit = try allocator.create(Commit);
+    errdefer allocator.destroy(commit);
 
     commit.* = Commit{
         .allocator = allocator,
