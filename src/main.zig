@@ -134,6 +134,9 @@ pub fn main() !void {
             try updateRef(allocator, git_dir_path, current_ref, .{ .object_name = object_name });
         } else {
             std.debug.print("Warning: In a detached HEAD state\n", .{});
+            std.debug.print("Commit {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) });
+
+            try updateRef(allocator, git_dir_path, "HEAD", .{ .object_name = object_name });
         }
 
     } else if (mem.eql(u8, subcommand, "branch")) {
