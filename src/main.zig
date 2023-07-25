@@ -33,7 +33,7 @@ pub fn main() !void {
             \\rm
             \\status
             \\
-            , .{});
+        , .{});
         return;
     };
 
@@ -87,8 +87,8 @@ pub fn main() !void {
 
         const stat = try fs.cwd().statFile(file_path);
         switch (stat.kind) {
-            .Directory => try addFilesToIndex(allocator, repo_path, index, file_path),
-            .SymLink, .File, => try addFileToIndex(allocator, repo_path, index, file_path),
+            .directory => try addFilesToIndex(allocator, repo_path, index, file_path),
+            .sym_link, .file, => try addFileToIndex(allocator, repo_path, index, file_path),
             else => |tag| std.debug.print("Cannot add file of type {s} to index\n", .{ @tagName(tag) }),
         }
 
@@ -154,7 +154,7 @@ pub fn main() !void {
         var refs = try listHeadRefs(allocator, git_dir_path);
         defer refs.deinit();
 
-        std.sort.sort([]const u8, refs.refs, {}, sortStrings);
+        mem.sort([]const u8, refs.refs, {}, sortStrings);
 
         for (refs.refs) |ref| {
             const indicator: u8 = blk: {
@@ -424,7 +424,7 @@ pub const ObjectReader = struct {
     file: fs.File,
     header: ObjectHeader,
 
-    pub const Decompressor = std.compress.zlib.ZlibStream(fs.File.Reader);
+    pub const Decompressor = std.compress.zlib.DecompressStream(fs.File.Reader);
     pub const Reader = Decompressor.Reader;
     const Self = @This();
 
@@ -441,7 +441,7 @@ pub const ObjectReader = struct {
 
         const file = try fs.cwd().openFile(path, .{});
 
-        var decompressor = try std.compress.zlib.zlibStream(allocator, file.reader());
+        var decompressor = try std.compress.zlib.decompressStream(allocator, file.reader());
         const decompressor_reader = decompressor.reader();
 
         const header = try decompressor_reader.readUntilDelimiterAlloc(allocator, 0, 1024);
@@ -456,7 +456,7 @@ pub const ObjectReader = struct {
         };
 
         const object_header = ObjectHeader{
-            .@"type" = object_type,
+            .type = object_type,
             .size = size,
         };
 
@@ -487,7 +487,7 @@ pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_nam
 }
 
 pub const ObjectHeader = struct {
-    @"type": ObjectType,
+    type: ObjectType,
     size: u32,
 };
 
@@ -543,17 +543,17 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
         const mtime_n = try index_reader.readIntBig(u32);
         const dev = try index_reader.readIntBig(u32);
         const ino = try index_reader.readIntBig(u32);
-        const mode = @bitCast(Index.Mode, try index_reader.readIntBig(u32));
+        const mode = @as(Index.Mode, @bitCast(try index_reader.readIntBig(u32)));
         const uid = try index_reader.readIntBig(u32);
         const gid = try index_reader.readIntBig(u32);
         const file_size = try index_reader.readIntBig(u32);
         const object_name = try index_reader.readBytesNoEof(20);
 
-        const flags = @bitCast(Index.Flags, try index_reader.readIntBig(u16));
+        const flags = @as(Index.Flags, @bitCast(try index_reader.readIntBig(u16)));
         const extended_flags = blk: {
             if (header.version > 2 and flags.extended) {
                 const extra_flgs = try index_reader.readIntBig(u16);
-                break :blk @bitCast(Index.ExtendedFlags, extra_flgs);
+                break :blk @as(Index.ExtendedFlags, @bitCast(extra_flgs));
             } else {
                 break :blk null;
             }
@@ -613,7 +613,7 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: *const
 
     try index_writer.writeAll(&index.header.signature);
     try index_writer.writeIntBig(u32, index.header.version);
-    try index_writer.writeIntBig(u32, @truncate(u32, index.entries.items.len));
+    try index_writer.writeIntBig(u32, @as(u32, @truncate(index.entries.items.len)));
 
     var entries: []*const Index.Entry = try allocator.alloc(*Index.Entry, index.entries.items.len);
     defer allocator.free(entries);
@@ -622,7 +622,7 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: *const
         entries[idx] = entry;
     }
 
-    std.sort.sort(*const Index.Entry, entries, {}, sortIndexEntries);
+    mem.sort(*const Index.Entry, entries, {}, sortIndexEntries);
 
     for (entries) |entry| {
         var counter = std.io.countingWriter(index_writer);
@@ -634,15 +634,15 @@ pub fn writeIndex(allocator: mem.Allocator, repo_path: []const u8, index: *const
         try counting_writer.writeIntBig(u32, entry.mtime_n);
         try counting_writer.writeIntBig(u32, entry.dev);
         try counting_writer.writeIntBig(u32, entry.ino);
-        try counting_writer.writeIntBig(u32, @bitCast(u32, entry.mode));
+        try counting_writer.writeIntBig(u32, @as(u32, @bitCast(entry.mode)));
         try counting_writer.writeIntBig(u32, entry.uid);
         try counting_writer.writeIntBig(u32, entry.gid);
         try counting_writer.writeIntBig(u32, entry.file_size);
         try counting_writer.writeAll(&entry.object_name);
 
-        try counting_writer.writeIntBig(u16, @bitCast(u16, entry.flags));
+        try counting_writer.writeIntBig(u16, @as(u16, @bitCast(entry.flags)));
         if (index.header.version > 2 and entry.flags.extended and entry.extended_flags != null) {
-            try counting_writer.writeIntBig(u16, @bitCast(u16, entry.extended_flags.?));
+            try counting_writer.writeIntBig(u16, @as(u16, @bitCast(entry.extended_flags.?)));
         }
 
         try counting_writer.writeAll(entry.path);
@@ -765,14 +765,13 @@ pub const Index = struct {
         pub fn format(self: Entry, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
             _ = fmt;
             _ = options;
-            try out_stream.print("Index.Entry{{ mode: {o}, object_name: {s}, size: {d:5}, path: {s} }}",
-                                 .{ @bitCast(u32, self.mode), std.fmt.fmtSliceHexLower(&self.object_name), self.file_size, self.path });
+            try out_stream.print("Index.Entry{{ mode: {o}, object_name: {s}, size: {d:5}, path: {s} }}", .{ @as(u32, @bitCast(self.mode)), std.fmt.fmtSliceHexLower(&self.object_name), self.file_size, self.path });
         }
     };
 
     pub const EntryList = std.ArrayList(Entry);
 
-    pub const Mode = packed struct (u32) {
+    pub const Mode = packed struct(u32) {
         unix_permissions: u9,
         unused: u3 = 0,
         object_type: EntryType,
@@ -807,7 +806,7 @@ pub fn readTree(allocator: mem.Allocator, git_dir_path: []const u8, object_name:
     defer object.deinit();
 
     const object_type = try loadObject(allocator, git_dir_path, object_name, object.writer());
-    if (object_type.@"type" != .tree) {
+    if (object_type.type != .tree) {
         return error.IncorrectObjectType;
     }
 
@@ -817,7 +816,7 @@ pub fn readTree(allocator: mem.Allocator, git_dir_path: []const u8, object_name:
     while (buffer.pos != object.items.len) {
         var mode_buffer: [16]u8 = undefined;
         const mode_text = try object_reader.readUntilDelimiter(&mode_buffer, ' ');
-        const mode = @bitCast(Index.Mode, try std.fmt.parseInt(u32, mode_text, 8));
+        const mode = @as(Index.Mode, @bitCast(try std.fmt.parseInt(u32, mode_text, 8)));
         const path = try object_reader.readUntilDelimiterAlloc(allocator, 0, fs.MAX_PATH_BYTES);
         const tree_object_name = try object_reader.readBytesNoEof(20);
 
@@ -842,10 +841,10 @@ pub fn writeTree(allocator: mem.Allocator, git_dir_path: []const u8, tree: Tree)
     defer tree_data.deinit();
     var tree_writer = tree_data.writer();
 
-    std.sort.sort(Tree.Entry, tree.entries, {}, sortTreeEntries);
+    mem.sort(Tree.Entry, tree.entries, {}, sortTreeEntries);
 
     for (tree.entries) |entry| {
-        try tree_writer.print("{o} {s}\x00", .{ @bitCast(u32, entry.mode), entry.path });
+        try tree_writer.print("{o} {s}\x00", .{ @as(u32, @bitCast(entry.mode)), entry.path });
         try tree_writer.writeAll(&entry.object_name);
     }
 
@@ -881,8 +880,7 @@ pub const Tree = struct {
             _ = options;
             _ = fmt;
 
-            try out_stream.print("Tree.Entry{{ mode: {o: >6}, object_name: {s}, path: {s} }}",
-                                 .{ @bitCast(u32, self.mode), std.fmt.fmtSliceHexLower(&self.object_name), self.path });
+            try out_stream.print("Tree.Entry{{ mode: {o: >6}, object_name: {s}, path: {s} }}", .{ @as(u32, @bitCast(self.mode)), std.fmt.fmtSliceHexLower(&self.object_name), self.path });
         }
     };
 
@@ -998,12 +996,12 @@ pub fn addFilesToIndex(allocator: mem.Allocator, repo_path: []const u8, index: *
 
     while (try walker.next()) |walker_entry| {
         switch (walker_entry.kind) {
-            .SymLink, .File => {
+            .sym_link, .file => {
                 const joined_path = try fs.path.join(allocator, &.{ dir_path, walker_entry.path });
                 defer allocator.free(joined_path);
                 try addFileToIndex(allocator, repo_path, index, joined_path);
             },
-            .Directory => continue,
+            .directory => continue,
             else => |tag| std.debug.print("Cannot add type {s} to index\n", .{ @tagName(tag) }),
         }
     }
@@ -1059,7 +1057,7 @@ pub fn fileToIndexEntry(allocator: mem.Allocator, repo_path: []const u8, file_pa
         if (repo_relative_path.len > 0xFFF) {
             break :blk @as(u12, 0xFFF);
         } else {
-            break :blk @truncate(u12, repo_relative_path.len);
+            break :blk @as(u12, @truncate(repo_relative_path.len));
         }
     };
 
@@ -1069,16 +1067,16 @@ pub fn fileToIndexEntry(allocator: mem.Allocator, repo_path: []const u8, file_pa
     const object_name = try saveObject(allocator, git_dir_path, data, .blob);
 
     const entry = Index.Entry{
-        .ctime_s = @intCast(u32, stat.ctime().tv_sec),
-        .ctime_n = @intCast(u32, stat.ctime().tv_nsec),
-        .mtime_s = @intCast(u32, stat.mtime().tv_sec),
-        .mtime_n = @intCast(u32, stat.mtime().tv_nsec),
-        .dev = @intCast(u32, stat.dev),
-        .ino = @intCast(u32, stat.ino),
-        .mode = @bitCast(Index.Mode, @as(u32, stat.mode)),
+        .ctime_s = @as(u32, @intCast(stat.ctime().tv_sec)),
+        .ctime_n = @as(u32, @intCast(stat.ctime().tv_nsec)),
+        .mtime_s = @as(u32, @intCast(stat.mtime().tv_sec)),
+        .mtime_n = @as(u32, @intCast(stat.mtime().tv_nsec)),
+        .dev = @as(u32, @intCast(stat.dev)),
+        .ino = @as(u32, @intCast(stat.ino)),
+        .mode = @as(Index.Mode, @bitCast(@as(u32, stat.mode))),
         .uid = stat.uid,
         .gid = stat.gid,
-        .file_size = @intCast(u32, stat.size),
+        .file_size = @as(u32, @intCast(stat.size)),
         .object_name = object_name,
         .flags = .{
             .name_length = name_len,
@@ -1148,7 +1146,7 @@ pub fn readCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit_obj
     defer commit_data.deinit();
 
     const commit_object_header = try loadObject(allocator, git_dir_path, commit_object_name, commit_data.writer());
-    if (commit_object_header.@"type" != .commit) {
+    if (commit_object_header.type != .commit) {
         return error.InvalidObjectType;
     }
 
@@ -1313,7 +1311,7 @@ pub const Commit = struct {
             _ = fmt;
             _ = options;
             const sign: u8 = if (self.timezone > 0) '+' else '-';
-            const timezone = @intCast(u16, std.math.absInt(self.timezone) catch 0);
+            const timezone = @as(u16, @intCast(std.math.absInt(self.timezone) catch 0));
             try out_stream.print("{s} <{s}> {d} {c}{d:0>4}", .{ self.name, self.email, self.time, sign, timezone });
         }
     };
@@ -1327,7 +1325,7 @@ pub fn resolveHead(allocator: mem.Allocator, git_dir_path: []const u8) !?[20]u8 
 }
 
 /// Recursively resolves refs until an object name is found.
-pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8,  ref: []const u8) !?[20]u8 {
+pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) !?[20]u8 {
     const current_ref = try readRef(allocator, git_dir_path, ref) orelse return null;
 
     switch (current_ref) {
@@ -1482,7 +1480,7 @@ pub fn listRefs(allocator: mem.Allocator, git_dir_path: []const u8) !RefList {
 
     while (try walker.next()) |walker_entry| {
         switch (walker_entry.kind) {
-            .File => {
+            .file => {
                 const ref_path = try fs.path.join(allocator, &.{ "refs", walker_entry.path });
                 try ref_list.append(ref_path);
             },
@@ -1491,7 +1489,7 @@ pub fn listRefs(allocator: mem.Allocator, git_dir_path: []const u8) !RefList {
     }
 
     var sorted_ref_list = try ref_list.toOwnedSlice();
-    std.sort.sort([]const u8, sorted_ref_list, {}, sortStrings);
+    mem.sort([]const u8, sorted_ref_list, {}, sortStrings);
 
     return .{
         .allocator = allocator,
@@ -1640,7 +1638,7 @@ pub const TreeWalker = struct {
 
         try self.path_stack.append(orig_entry.path);
 
-        const entry_path = try fs.path.join(buffer_alloc.allocator(), self.path_stack.items );
+        const entry_path = try fs.path.join(buffer_alloc.allocator(), self.path_stack.items);
         const entry = Tree.Entry{
             .mode = orig_entry.mode,
             .object_name = orig_entry.object_name,
@@ -1687,7 +1685,7 @@ pub fn readTag(allocator: mem.Allocator, git_dir_path: []const u8, tag_object_na
     defer tag_data.deinit();
 
     const object_header = try loadObject(allocator, git_dir_path, tag_object_name, tag_data.writer());
-    if (object_header.@"type" != .tag) {
+    if (object_header.type != .tag) {
         return error.IncorrectObjectType;
     }
 
@@ -1724,7 +1722,7 @@ pub fn readTag(allocator: mem.Allocator, git_dir_path: []const u8, tag_object_na
     return Tag{
         .allocator = allocator,
         .object_name = object_name orelse return error.InvalidObjectName,
-        .@"type" = tag_type orelse return error.InvalidObjectType,
+        .type = tag_type orelse return error.InvalidObjectType,
         .tag = tag_tag orelse return error.InvalidTagName,
         .tagger = tagger orelse return error.InvalidTagger,
         .message = message,
@@ -1736,7 +1734,7 @@ pub fn readTag(allocator: mem.Allocator, git_dir_path: []const u8, tag_object_na
 pub const Tag = struct {
     allocator: mem.Allocator,
     object_name: [20]u8,
-    @"type": ObjectType,
+    type: ObjectType,
     tag: []const u8,
     tagger: Commit.Committer,
     message: []const u8,
@@ -1750,8 +1748,7 @@ pub const Tag = struct {
     pub fn format(self: Tag, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: anytype) !void {
         _ = fmt;
         _ = options;
-        try out_stream.print("Tag{{ object_name: {s}, type: {s}, tag: {s}, tagger: {}, message: \"{s}\" }}",
-                             .{ std.fmt.fmtSliceHexLower(&self.object_name), @tagName(self.@"type"), self.tag, self.tagger, self.message });
+        try out_stream.print("Tag{{ object_name: {s}, type: {s}, tag: {s}, tagger: {}, message: \"{s}\" }}", .{ std.fmt.fmtSliceHexLower(&self.object_name), @tagName(self.type), self.tag, self.tagger, self.message });
     }
 };
 

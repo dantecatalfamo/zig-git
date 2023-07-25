@@ -7,7 +7,7 @@ const fs = std.fs;
 const mem = std.mem;
 const deflate = std.compress.deflate;
 
-pub const CompressionLevel = enum (u2) {
+pub const CompressionLevel = enum(u2) {
     fastest = 0,
     fast = 1,
     default = 2,
@@ -37,7 +37,7 @@ pub fn ZlibStreamWriter(comptime WriterType: type) type {
             const CINFO: u4 = 7;
             const CMF: u8 = (@as(u8, CINFO) << 4) | CM;
 
-            const FLEVEL: u2 = @enumToInt(options.level);
+            const FLEVEL: u2 = @intFromEnum(options.level);
             const FDICT: u1 = 0;
             const FCHECK: u5 = 28;
             const FLG = (@as(u8, FLEVEL) << 6) | (@as(u8, FDICT) << 5) | FCHECK;
