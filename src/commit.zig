@@ -195,7 +195,7 @@ pub const Commit = struct {
             _ = fmt;
             _ = options;
             const sign: u8 = if (self.timezone > 0) '+' else '-';
-            const timezone = @as(u16, @intCast(std.math.absInt(self.timezone) catch 0));
+            const timezone: u16 = @intCast(@abs(self.timezone));
             try out_stream.print("{s} <{s}> {d} {c}{d:0>4}", .{ self.name, self.email, self.time, sign, timezone });
         }
     };
