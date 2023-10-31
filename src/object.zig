@@ -13,6 +13,15 @@ pub fn hashObject(data: []const u8, obj_type: ObjectType, digest: *[20]u8) void 
     hash.final(digest);
 }
 
+/// Restores the contents of a file from an object
+pub fn restoreFileFromObject(allocator: mem.Allocator, git_dir_path: []const u8, path: []const u8, object_name: [20]u8) !ObjectHeader {
+    const file = try fs.cwd().createFile(path, .{});
+    defer file.close();
+
+    const writer = file.writer();
+    return try loadObject(allocator, git_dir_path, object_name, writer);
+}
+
 // TODO Maybe rewrite to use a reader interface instead of a data slice
 /// Writes data to an object and returns its object name
 pub fn saveObject(allocator: mem.Allocator, git_dir_path: []const u8, data: []const u8, obj_type: ObjectType) ![20]u8 {

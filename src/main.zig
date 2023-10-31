@@ -33,6 +33,7 @@ const indexToTree = tree_zig.indexToTree;
 const TreeList = tree_zig.TreeList;
 const walkTree = tree_zig.walkTree;
 const readTree = tree_zig.readTree;
+const restoreTree = tree_zig.restoreTree;
 
 const commit_zig = @import("commit.zig");
 const Commit = commit_zig.Commit;
@@ -79,6 +80,7 @@ pub fn main() !void {
             \\refs
             \\rm
             \\status
+            \\checkout
             \\
         , .{});
         return;
@@ -397,16 +399,20 @@ pub fn main() !void {
         try removeFileFromIndex(allocator, repo_path, index, file_path);
 
         try writeIndex(allocator, repo_path, index);
+
+    } else if (mem.eql(u8, subcommand, "checkout")) {
+        const commit_name = args.next() orelse {
+            std.debug.print("No commit specified\n", .{});
+            return;
+        };
+
+        const commit_object_name = try hexDigestToObjectName(commit_name);
+
+        const repo_path = try findRepoRoot(allocator);
+        defer allocator.free(repo_path);
+
+        try restoreCommit(allocator, repo_path, commit_object_name);
     }
-}
-
-/// Restores the contents of a file from an object
-pub fn restoreFileFromObject(allocator: mem.Allocator, git_dir_path: []const u8, path: []const u8, object_name: [20]u8) !ObjectHeader {
-    const file = try fs.cwd().createFile(path, .{});
-    defer file.close();
-
-    const writer = file.writer();
-    return try loadObject(allocator, git_dir_path, object_name, writer);
 }
 
 /// TODO Restores the contents of a file from a commit and a path
@@ -415,6 +421,17 @@ pub fn restoreFileFromCommit(allocator: mem.Allocator, git_dir_path: []const u8,
     _ = allocator;
     const file = try fs.cwd().createFile(path, .{});
     defer file.close();
+}
+
+/// Restore all of a commit's files in a repo
+pub fn restoreCommit(allocator: mem.Allocator, repo_path: []const u8, commit_object_name: [20]u8) !void {
+    const git_dir_path = try repoToGitDir(allocator, repo_path);
+    defer allocator.free(git_dir_path);
+
+    const commit = try readCommit(allocator, git_dir_path, commit_object_name);
+    defer commit.deinit();
+
+    try restoreTree(allocator, repo_path, commit.tree);
 }
 
 test "ref all" {

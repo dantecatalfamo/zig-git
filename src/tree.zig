@@ -17,6 +17,27 @@ const readIndex = index_zig.readIndex;
 const helpers = @import("helpers.zig");
 const StringList = helpers.StringList;
 
+pub fn restoreTree(allocator: mem.Allocator, repo_path: []const u8, tree_object_name: [20]u8) !void {
+    const git_dir_path = try helpers.repoToGitDir(allocator, repo_path);
+    defer allocator.free(git_dir_path);
+
+    var tree_iter = try walkTree(allocator, git_dir_path, tree_object_name);
+    defer tree_iter.deinit();
+
+    var path_buffer: [fs.MAX_PATH_BYTES]u8 = undefined;
+
+    while (try tree_iter.next()) |entry| {
+        if (entry.mode.object_type != .regular_file) {
+            // TODO Handle restoring other types of files
+            continue;
+        }
+        var path_allocator = std.heap.FixedBufferAllocator.init(&path_buffer);
+        const entry_full_path = try fs.path.join(path_allocator.allocator(), &.{ repo_path, entry.path });
+
+        std.debug.print("Restored File (Dry): [{s}] {s}, full_path: {s}\n", .{ std.fmt.fmtSliceHexLower(&entry.object_name), entry.path, entry_full_path });
+    }
+}
+
 pub fn readTree(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !Tree {
     var entries = std.ArrayList(Tree.Entry).init(allocator);
     var object = std.ArrayList(u8).init(allocator);
