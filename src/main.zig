@@ -39,6 +39,7 @@ const commit_zig = @import("commit.zig");
 const Commit = commit_zig.Commit;
 const writeCommit = commit_zig.writeCommit;
 const readCommit = commit_zig.readCommit;
+const restoreCommit = commit_zig.restoreCommit;
 
 const ref_zig = @import("ref.zig");
 const resolveRef = ref_zig.resolveRef;
@@ -411,6 +412,8 @@ pub fn main() !void {
         const repo_path = try findRepoRoot(allocator);
         defer allocator.free(repo_path);
 
+        // TODO modify refs to detached HEAD state, actually restore
+        // files, etc.
         try restoreCommit(allocator, repo_path, commit_object_name);
     }
 }
@@ -421,19 +424,6 @@ pub fn restoreFileFromCommit(allocator: mem.Allocator, git_dir_path: []const u8,
     _ = allocator;
     const file = try fs.cwd().createFile(path, .{});
     defer file.close();
-}
-
-/// Restore all of a commit's files in a repo
-pub fn restoreCommit(allocator: mem.Allocator, repo_path: []const u8, commit_object_name: [20]u8) !void {
-    const git_dir_path = try repoToGitDir(allocator, repo_path);
-    defer allocator.free(git_dir_path);
-
-    const commit = try readCommit(allocator, git_dir_path, commit_object_name);
-    defer commit.deinit();
-
-    // TODO modify refs to detached HEAD state, actually restore
-    // files, etc.
-    try restoreTree(allocator, repo_path, commit.tree);
 }
 
 test "ref all" {

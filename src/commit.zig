@@ -9,9 +9,22 @@ const object_zig = @import("object.zig");
 const loadObject = object_zig.loadObject;
 const saveObject = object_zig.saveObject;
 
+const tree_zig = @import("tree.zig");
+
 const helpers = @import("helpers.zig");
 const ObjectNameList = helpers.ObjectNameList;
 const hexDigestToObjectName = helpers.hexDigestToObjectName;
+
+/// Restore all of a commit's files in a repo
+pub fn restoreCommit(allocator: mem.Allocator, repo_path: []const u8, commit_object_name: [20]u8) !void {
+    const git_dir_path = try helpers.repoToGitDir(allocator, repo_path);
+    defer allocator.free(git_dir_path);
+
+    const commit = try readCommit(allocator, git_dir_path, commit_object_name);
+    defer commit.deinit();
+
+    try tree_zig.restoreTree(allocator, repo_path, commit.tree);
+}
 
 /// Writes a commit object and returns its name
 pub fn writeCommit(allocator: mem.Allocator, git_dir_path: []const u8, commit: Commit) ![20]u8 {
