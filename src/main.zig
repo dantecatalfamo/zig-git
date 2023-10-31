@@ -431,6 +431,8 @@ pub fn restoreCommit(allocator: mem.Allocator, repo_path: []const u8, commit_obj
     const commit = try readCommit(allocator, git_dir_path, commit_object_name);
     defer commit.deinit();
 
+    // TODO modify refs to detached HEAD state, actually restore
+    // files, etc.
     try restoreTree(allocator, repo_path, commit.tree);
 }
 
