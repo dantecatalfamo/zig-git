@@ -18,6 +18,8 @@ pub fn modifiedFromIndex(allocator: mem.Allocator, repo_path: []const u8) !*Inde
     var diff_entries = IndexDiff.EntryList.init(allocator);
 
     var path_buffer: [fs.MAX_PATH_BYTES]u8 = undefined;
+    // TODO Look at file stats to tell if it's been modified without
+    // hashing first to avoid reading every file
     for (index.entries.items) |entry| {
         var path_allocator = std.heap.FixedBufferAllocator.init(&path_buffer);
         const full_path = try fs.path.join(path_allocator.allocator(), &.{ repo_path, entry.path });
