@@ -4,6 +4,21 @@ const mem = std.mem;
 const debug = std.debug;
 const testing = std.testing;
 
+/// Calculate the object name of a file
+pub fn hashFile(file: fs.File) ![20]u8 {
+    var hash_buffer: [20]u8 = undefined;
+    var hash = std.crypto.hash.Sha1.init(.{});
+    const hash_writer = hash.writer();
+    const seekable = file.seekableStream();
+    const file_reader = file.reader();
+    try hash_writer.print("{s} {d}\x00", .{ @tagName(ObjectType.blob), try seekable.getEndPos() });
+    var pump = std.fifo.LinearFifo(u8, .{ .Static = 4096 }){};
+    try seekable.seekTo(0);
+    try pump.pump(file_reader, hash_writer);
+    hash.final(&hash_buffer);
+    return hash_buffer;
+}
+
 /// Hashes data and returns its object name
 pub fn hashObject(data: []const u8, obj_type: ObjectType, digest: *[20]u8) void {
     var hash = std.crypto.hash.Sha1.init(.{});
