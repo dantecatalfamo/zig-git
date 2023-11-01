@@ -63,362 +63,371 @@ pub fn main() !void {
     var args = std.process.args();
     _ = args.next();
 
-    const subcommand = args.next() orelse {
-        std.debug.print(
-            \\No subcommand specified.
-            \\Available subcommands:
-            \\add
-            \\branches
-            \\branch-create
-            \\commit
-            \\index
-            \\init
-            \\log
-            \\read-commit
-            \\read-ref
-            \\read-tag
-            \\read-tree
-            \\refs
-            \\rm
-            \\status
-            \\checkout
-            \\
-        , .{});
+    const subcommand = blk: {
+        const str = args.next() orelse break :blk null;
+        break :blk std.meta.stringToEnum(SubCommands, str);
+    } orelse {
+        std.debug.print("No subcommand specified.\nAvailable subcommands:\n", .{});
+        for (std.meta.fieldNames(SubCommands)) |field| {
+            std.debug.print("{s}\n", .{field});
+        }
         return;
     };
 
-    if (mem.eql(u8, subcommand, "index")) {
-        const repo_root = try findRepoRoot(allocator);
-        defer allocator.free(repo_root);
+    switch (subcommand) {
+        .index => {
+            const repo_root = try findRepoRoot(allocator);
+            defer allocator.free(repo_root);
 
-        std.debug.print("Repo root: {s}\n", .{ repo_root });
-        const index = readIndex(allocator, repo_root) catch |err| switch (err) {
-            error.FileNotFound => {
-                std.debug.print("No index\n", .{});
-                return;
-            },
-            else => return err,
-        };
-        std.debug.print("Signature: {s}\nNum Entries: {d}\nVersion: {d}\n", .{ index.header.signature, index.header.entries, index.header.version });
-        for (index.entries.items) |entry| {
-            std.debug.print("{}\n", .{ entry });
-        }
-        defer index.deinit();
-        return;
-
-    } else if (mem.eql(u8, subcommand, "init")) {
-        const path = blk: {
-            if (args.next()) |valid_path| {
-                break :blk valid_path;
-            } else {
-                break :blk ".";
-            }
-        };
-        try initialize(allocator, path);
-        std.debug.print("initialized empty repository {s}\n", .{ path });
-
-    } else if (mem.eql(u8, subcommand, "add")) {
-        const file_path = blk: {
-            if (args.next()) |valid_path| {
-                break :blk valid_path;
-            }
-            std.debug.print("Must specify file path\n", .{});
-            return error.NoFilePath;
-        };
-
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
-
-        var index = readIndex(allocator, repo_path) catch |err| switch (err) {
-            error.FileNotFound => try Index.init(allocator),
-            else => return err,
-        };
-        defer index.deinit();
-
-        const stat = try fs.cwd().statFile(file_path);
-        switch (stat.kind) {
-            .directory => try addFilesToIndex(allocator, repo_path, index, file_path),
-            .sym_link, .file, => try addFileToIndex(allocator, repo_path, index, file_path),
-            else => |tag| std.debug.print("Cannot add file of type {s} to index\n", .{ @tagName(tag) }),
-        }
-
-        try writeIndex(allocator, repo_path, index);
-
-
-    } else if (mem.eql(u8, subcommand, "commit")) {
-        const repo_root = try findRepoRoot(allocator);
-        defer allocator.free(repo_root);
-
-        const git_dir_path = try repoToGitDir(allocator, repo_root);
-        defer allocator.free(git_dir_path);
-
-        const tree = try indexToTree(allocator, repo_root);
-        const committer = Commit.Committer{
-            .name = "Gaba Goul",
-            .email = "gaba@cool.ca",
-            .time = std.time.timestamp(),
-            .timezone = 0,
-        };
-        var parents = ObjectNameList.init(allocator);
-        defer parents.deinit();
-
-        const head_ref = try resolveRef(allocator, git_dir_path, "HEAD");
-        if (head_ref) |valid_ref| {
-            try parents.append(valid_ref);
-        }
-
-        var commit = Commit{
-            .allocator = allocator,
-            .tree = tree,
-            .parents = parents,
-            .author = committer,
-            .committer = committer,
-            .message = "Commit test!",
-        };
-
-        const object_name = try writeCommit(allocator, git_dir_path, commit);
-
-        if (try currentRef(allocator, git_dir_path)) |current_ref| {
-            defer allocator.free(current_ref);
-            std.debug.print("Commit {s} to {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name), current_ref });
-
-            try updateRef(allocator, git_dir_path, current_ref, .{ .object_name = object_name });
-        } else {
-            std.debug.print("Warning: In a detached HEAD state\n", .{});
-            std.debug.print("Commit {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) });
-
-            try updateRef(allocator, git_dir_path, "HEAD", .{ .object_name = object_name });
-        }
-
-    } else if (mem.eql(u8, subcommand, "branches")) {
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
-
-        const git_dir_path = try repoToGitDir(allocator, repo_path);
-        defer allocator.free(git_dir_path);
-
-        const current_ref = try currentHeadRef(allocator, git_dir_path);
-
-        defer if (current_ref) |valid_ref| allocator.free(valid_ref);
-
-        var refs = try listHeadRefs(allocator, git_dir_path);
-        defer refs.deinit();
-
-        mem.sort([]const u8, refs.refs, {}, lessThanStrings);
-
-        for (refs.refs) |ref| {
-            const indicator: u8 = blk: {
-                if (current_ref) |valid_ref| {
-                    break :blk if (mem.eql(u8, valid_ref, ref)) '*' else ' ';
-                } else break :blk ' ';
+            std.debug.print("Repo root: {s}\n", .{ repo_root });
+            const index = readIndex(allocator, repo_root) catch |err| switch (err) {
+                error.FileNotFound => {
+                    std.debug.print("No index\n", .{});
+                    return;
+                },
+                else => return err,
             };
-            std.debug.print("{c} {s}\n", .{ indicator, ref });
-        }
-
-    } else if (mem.eql(u8, subcommand, "branch-create")) {
-        const new_branch_name = args.next() orelse {
-            std.debug.print("No branch name specified\n", .{});
-            return;
-        };
-
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
-
-        const git_dir_path = try repoToGitDir(allocator, repo_path);
-        defer allocator.free(git_dir_path);
-
-        const current_commit = try resolveRef(allocator, git_dir_path, "HEAD");
-        if (current_commit) |valid_commit_object_name| {
-            try updateRef(allocator, git_dir_path, new_branch_name, .{ .object_name = valid_commit_object_name });
-        }
-        try updateRef(allocator, git_dir_path, "HEAD", .{ .ref = new_branch_name });
-
-
-    } else if (mem.eql(u8, subcommand, "refs")) {
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
-
-        const git_dir_path = try repoToGitDir(allocator, repo_path);
-        defer allocator.free(git_dir_path);
-
-        const refs = try listRefs(allocator, git_dir_path);
-        defer refs.deinit();
-
-        for (refs.refs) |ref| {
-            std.debug.print("{s}\n", .{ ref });
-        }
-
-    } else if (mem.eql(u8, subcommand, "read-tree")) {
-        const tree_hash_digest = args.next() orelse {
-            std.debug.print("No tree object name specified\n", .{});
-            return;
-        };
-
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
-
-        const git_dir_path = try repoToGitDir(allocator, repo_path);
-        defer allocator.free(git_dir_path);
-
-        var tree_name_buffer: [20]u8 = undefined;
-        const tree_object_name = try std.fmt.hexToBytes(&tree_name_buffer, tree_hash_digest);
-        _ = tree_object_name;
-
-        var walker = try walkTree(allocator, git_dir_path, tree_name_buffer);
-        defer walker.deinit();
-
-        while (try walker.next()) |entry| {
-            std.debug.print("{}\n", .{ entry });
-        }
-
-    } else if (mem.eql(u8, subcommand, "read-commit")) {
-        const commit_hash_digest = args.next() orelse {
-            std.debug.print("No commit object hash specified\n", .{});
-            return;
-        };
-
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
-
-        const git_dir_path = try repoToGitDir(allocator, repo_path);
-        defer allocator.free(git_dir_path);
-
-        const commit_object_name = try hexDigestToObjectName(commit_hash_digest);
-        const commit = try readCommit(allocator, git_dir_path, commit_object_name);
-        defer commit.deinit();
-
-        std.debug.print("{any}\n", .{ commit });
-
-    } else if (mem.eql(u8, subcommand, "root")) {
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
-
-        std.debug.print("{s}\n", .{ repo_path });
-
-    } else if (mem.eql(u8, subcommand, "read-ref")) {
-        const ref_name = args.next();
-
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
-
-        const git_dir_path = try repoToGitDir(allocator, repo_path);
-        defer allocator.free(git_dir_path);
-
-        if (ref_name) |valid_ref_name| {
-            const ref = try readRef(allocator, git_dir_path, valid_ref_name) orelse return;
-            defer ref.deinit(allocator);
-
-            std.debug.print("{}\n", .{ ref });
-        } else {
-            const ref_list = try listRefs(allocator, git_dir_path);
-            defer ref_list.deinit();
-
-            for (ref_list.refs) |ref_path| {
-                const ref = try readRef(allocator, git_dir_path, ref_path);
-                defer ref.?.deinit(allocator);
-
-                std.debug.print("{s}: {}\n", .{ ref_path, ref.? });
+            std.debug.print("Signature: {s}\nNum Entries: {d}\nVersion: {d}\n", .{ index.header.signature, index.header.entries, index.header.version });
+            for (index.entries.items) |entry| {
+                std.debug.print("{}\n", .{ entry });
             }
-        }
-    } else if (mem.eql(u8, subcommand, "read-tag")) {
-        const tag_name = args.next() orelse {
-            std.debug.print("No tag specified\n", .{});
+            defer index.deinit();
             return;
-        };
+        },
+        .init => {
+            const path = blk: {
+                if (args.next()) |valid_path| {
+                    break :blk valid_path;
+                } else {
+                    break :blk ".";
+                }
+            };
+            try initialize(allocator, path);
+            std.debug.print("initialized empty repository {s}\n", .{ path });
+        },
+        .add => {
+            const file_path = blk: {
+                if (args.next()) |valid_path| {
+                    break :blk valid_path;
+                }
+                std.debug.print("Must specify file path\n", .{});
+                return error.NoFilePath;
+            };
 
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
 
-        const git_dir_path = try repoToGitDir(allocator, repo_path);
-        defer allocator.free(git_dir_path);
+            var index = readIndex(allocator, repo_path) catch |err| switch (err) {
+                error.FileNotFound => try Index.init(allocator),
+                else => return err,
+            };
+            defer index.deinit();
 
-        const tag_object_name = try hexDigestToObjectName(tag_name);
+            const stat = try fs.cwd().statFile(file_path);
+            switch (stat.kind) {
+                .directory => try addFilesToIndex(allocator, repo_path, index, file_path),
+                .sym_link, .file, => try addFileToIndex(allocator, repo_path, index, file_path),
+                else => |tag| std.debug.print("Cannot add file of type {s} to index\n", .{ @tagName(tag) }),
+            }
 
-        const tag = try readTag(allocator, git_dir_path, tag_object_name);
-        defer tag.deinit();
+            try writeIndex(allocator, repo_path, index);
+        },
+        .commit => {
+            const repo_root = try findRepoRoot(allocator);
+            defer allocator.free(repo_root);
 
-        std.debug.print("{}\n", .{ tag });
-    } else if (mem.eql(u8, subcommand, "log")) {
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
+            const git_dir_path = try repoToGitDir(allocator, repo_root);
+            defer allocator.free(git_dir_path);
 
-        const git_dir_path = try repoToGitDir(allocator, repo_path);
-        defer allocator.free(git_dir_path);
+            const tree = try indexToTree(allocator, repo_root);
+            const committer = Commit.Committer{
+                .name = "Gaba Goul",
+                .email = "gaba@cool.ca",
+                .time = std.time.timestamp(),
+                .timezone = 0,
+            };
+            var parents = ObjectNameList.init(allocator);
+            defer parents.deinit();
 
-        const commit_object_name = try resolveHead(allocator, git_dir_path) orelse return;
+            const head_ref = try resolveRef(allocator, git_dir_path, "HEAD");
+            if (head_ref) |valid_ref| {
+                try parents.append(valid_ref);
+            }
 
-        var commit: ?*Commit = null;
-        commit = try readCommit(allocator, git_dir_path, commit_object_name);
+            var commit = Commit{
+                .allocator = allocator,
+                .tree = tree,
+                .parents = parents,
+                .author = committer,
+                .committer = committer,
+                .message = "Commit test!",
+            };
 
-        std.debug.print("{s}: ", .{std.fmt.fmtSliceHexLower(&commit_object_name)});
-        while (commit) |valid_commit| {
-            const old_commit = valid_commit;
-            defer old_commit.deinit();
+            const object_name = try writeCommit(allocator, git_dir_path, commit);
 
-            std.debug.print("{}\n", .{valid_commit});
-            if (valid_commit.parents.items.len >= 1) {
-                // HACK We only look at the first parent, we should
-                // look at all (for merges, etc.)
-                std.debug.print("{s}: ", .{std.fmt.fmtSliceHexLower(&valid_commit.parents.items[0])});
-                commit = try readCommit(allocator, git_dir_path, valid_commit.parents.items[0]);
+            if (try currentRef(allocator, git_dir_path)) |current_ref| {
+                defer allocator.free(current_ref);
+                std.debug.print("Commit {s} to {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name), current_ref });
+
+                try updateRef(allocator, git_dir_path, current_ref, .{ .object_name = object_name });
             } else {
-                commit = null;
+                std.debug.print("Warning: In a detached HEAD state\n", .{});
+                std.debug.print("Commit {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) });
+
+                try updateRef(allocator, git_dir_path, "HEAD", .{ .object_name = object_name });
             }
+        },
+        .branches => {
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            const current_ref = try currentHeadRef(allocator, git_dir_path);
+
+            defer if (current_ref) |valid_ref| allocator.free(valid_ref);
+
+            var refs = try listHeadRefs(allocator, git_dir_path);
+            defer refs.deinit();
+
+            mem.sort([]const u8, refs.refs, {}, lessThanStrings);
+
+            for (refs.refs) |ref| {
+                const indicator: u8 = blk: {
+                    if (current_ref) |valid_ref| {
+                        break :blk if (mem.eql(u8, valid_ref, ref)) '*' else ' ';
+                    } else break :blk ' ';
+                };
+                std.debug.print("{c} {s}\n", .{ indicator, ref });
+            }
+        },
+        .@"branch-create" =>  {
+            const new_branch_name = args.next() orelse {
+                std.debug.print("No branch name specified\n", .{});
+                return;
+            };
+
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            const current_commit = try resolveRef(allocator, git_dir_path, "HEAD");
+            if (current_commit) |valid_commit_object_name| {
+                try updateRef(allocator, git_dir_path, new_branch_name, .{ .object_name = valid_commit_object_name });
+            }
+            try updateRef(allocator, git_dir_path, "HEAD", .{ .ref = new_branch_name });
+        },
+        .refs => {
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            const refs = try listRefs(allocator, git_dir_path);
+            defer refs.deinit();
+
+            for (refs.refs) |ref| {
+                std.debug.print("{s}\n", .{ ref });
+            }
+        },
+        .@"read-tree" => {
+            const tree_hash_digest = args.next() orelse {
+                std.debug.print("No tree object name specified\n", .{});
+                return;
+            };
+
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            var tree_name_buffer: [20]u8 = undefined;
+            const tree_object_name = try std.fmt.hexToBytes(&tree_name_buffer, tree_hash_digest);
+            _ = tree_object_name;
+
+            var walker = try walkTree(allocator, git_dir_path, tree_name_buffer);
+            defer walker.deinit();
+
+            while (try walker.next()) |entry| {
+                std.debug.print("{}\n", .{ entry });
+            }
+        },
+        .@"read-commit" => {
+            const commit_hash_digest = args.next() orelse {
+                std.debug.print("No commit object hash specified\n", .{});
+                return;
+            };
+
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            const commit_object_name = try hexDigestToObjectName(commit_hash_digest);
+            const commit = try readCommit(allocator, git_dir_path, commit_object_name);
+            defer commit.deinit();
+
+            std.debug.print("{any}\n", .{ commit });
+        },
+        .root => {
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            std.debug.print("{s}\n", .{ repo_path });
+        },
+        .@"read-ref" => {
+            const ref_name = args.next();
+
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            if (ref_name) |valid_ref_name| {
+                const ref = try readRef(allocator, git_dir_path, valid_ref_name) orelse return;
+                defer ref.deinit(allocator);
+
+                std.debug.print("{}\n", .{ ref });
+            } else {
+                const ref_list = try listRefs(allocator, git_dir_path);
+                defer ref_list.deinit();
+
+                for (ref_list.refs) |ref_path| {
+                    const ref = try readRef(allocator, git_dir_path, ref_path);
+                    defer ref.?.deinit(allocator);
+
+                    std.debug.print("{s}: {}\n", .{ ref_path, ref.? });
+                }
+            }
+        },
+        .@"read-tag" => {
+            const tag_name = args.next() orelse {
+                std.debug.print("No tag specified\n", .{});
+                return;
+            };
+
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            const tag_object_name = try hexDigestToObjectName(tag_name);
+
+            const tag = try readTag(allocator, git_dir_path, tag_object_name);
+            defer tag.deinit();
+
+            std.debug.print("{}\n", .{ tag });
+        },
+        .log => {
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            const commit_object_name = try resolveHead(allocator, git_dir_path) orelse return;
+
+            var commit: ?*Commit = null;
+            commit = try readCommit(allocator, git_dir_path, commit_object_name);
+
+            std.debug.print("{s}: ", .{std.fmt.fmtSliceHexLower(&commit_object_name)});
+            while (commit) |valid_commit| {
+                const old_commit = valid_commit;
+                defer old_commit.deinit();
+
+                std.debug.print("{}\n", .{valid_commit});
+                if (valid_commit.parents.items.len >= 1) {
+                    // HACK We only look at the first parent, we should
+                    // look at all (for merges, etc.)
+                    std.debug.print("{s}: ", .{std.fmt.fmtSliceHexLower(&valid_commit.parents.items[0])});
+                    commit = try readCommit(allocator, git_dir_path, valid_commit.parents.items[0]);
+                } else {
+                    commit = null;
+                }
+            }
+        },
+        .status => {
+            // TODO Give more useful status information
+
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            const current_ref = try currentHead(allocator, git_dir_path);
+            if (current_ref) |valid_ref| {
+                defer valid_ref.deinit(allocator);
+
+                switch (valid_ref) {
+                    .ref => |ref| std.debug.print("On branch {s}\n", .{ std.mem.trimLeft(u8, ref, "refs/heads/") }),
+                    .object_name => |object_name| std.debug.print("Detached HEAD {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) }),
+                }
+            }
+        },
+        .rm => {
+            const file_path = blk: {
+                if (args.next()) |valid_path| {
+                    break :blk valid_path;
+                }
+                std.debug.print("Must specify file path\n", .{});
+                return error.NoFilePath;
+            };
+
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            var index = try readIndex(allocator, repo_path);
+            defer index.deinit();
+
+            try removeFileFromIndex(allocator, repo_path, index, file_path);
+
+            try writeIndex(allocator, repo_path, index);
+        },
+        .checkout => {
+            const commit_name = args.next() orelse {
+                std.debug.print("No commit specified\n", .{});
+                return;
+            };
+
+            const commit_object_name = try hexDigestToObjectName(commit_name);
+
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            // TODO modify refs to detached HEAD state, actually restore
+            // files, etc.
+            try restoreCommit(allocator, repo_path, commit_object_name);
         }
-
-    } else if (mem.eql(u8, subcommand, "status")) {
-        // TODO Give more useful status information
-
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
-
-        const git_dir_path = try repoToGitDir(allocator, repo_path);
-        defer allocator.free(git_dir_path);
-
-        const current_ref = try currentHead(allocator, git_dir_path);
-        if (current_ref) |valid_ref| {
-            defer valid_ref.deinit(allocator);
-
-            switch (valid_ref) {
-                .ref => |ref| std.debug.print("On branch {s}\n", .{ std.mem.trimLeft(u8, ref, "refs/heads/") }),
-                .object_name => |object_name| std.debug.print("Detached HEAD {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) }),
-            }
-        }
-    } else if (mem.eql(u8, subcommand, "rm")) {
-        const file_path = blk: {
-            if (args.next()) |valid_path| {
-                break :blk valid_path;
-            }
-            std.debug.print("Must specify file path\n", .{});
-            return error.NoFilePath;
-        };
-
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
-
-        var index = try readIndex(allocator, repo_path);
-        defer index.deinit();
-
-        try removeFileFromIndex(allocator, repo_path, index, file_path);
-
-        try writeIndex(allocator, repo_path, index);
-
-    } else if (mem.eql(u8, subcommand, "checkout")) {
-        const commit_name = args.next() orelse {
-            std.debug.print("No commit specified\n", .{});
-            return;
-        };
-
-        const commit_object_name = try hexDigestToObjectName(commit_name);
-
-        const repo_path = try findRepoRoot(allocator);
-        defer allocator.free(repo_path);
-
-        // TODO modify refs to detached HEAD state, actually restore
-        // files, etc.
-        try restoreCommit(allocator, repo_path, commit_object_name);
     }
 }
+
+const SubCommands = enum {
+    add,
+    branches,
+    @"branch-create",
+    checkout,
+    commit,
+    index,
+    init,
+    log,
+    @"read-commit",
+    @"read-ref",
+    @"read-tag",
+    @"read-tree",
+    refs,
+    rm,
+    root,
+    status,
+};
 
 /// TODO Restores the contents of a file from a commit and a path
 pub fn restoreFileFromCommit(allocator: mem.Allocator, git_dir_path: []const u8, path: []const u8) !void {
