@@ -68,7 +68,7 @@ pub fn main() !void {
             \\No subcommand specified.
             \\Available subcommands:
             \\add
-            \\branch
+            \\branches
             \\branch-create
             \\commit
             \\index
@@ -190,7 +190,7 @@ pub fn main() !void {
             try updateRef(allocator, git_dir_path, "HEAD", .{ .object_name = object_name });
         }
 
-    } else if (mem.eql(u8, subcommand, "branch")) {
+    } else if (mem.eql(u8, subcommand, "branches")) {
         const repo_path = try findRepoRoot(allocator);
         defer allocator.free(repo_path);
 
