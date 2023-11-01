@@ -244,6 +244,10 @@ pub fn sortIndexEntries(context: void, lhs: *const Index.Entry, rhs: *const Inde
     return mem.lessThan(u8, lhs.path, rhs.path);
 }
 
+// FIXME This is not super efficient. It traverses all directories,
+// including .git directories, and then rejects the files when it
+// calls `addFileToIndex`. I don't think there's a way to filter
+// directories using openIterableDir at the moment.
 /// Recursively add files to an index
 pub fn addFilesToIndex(allocator: mem.Allocator, repo_path: []const u8, index: *Index, dir_path: []const u8) !void {
     var dir_iterable = try fs.cwd().openIterableDir(dir_path, .{});
