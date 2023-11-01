@@ -12,7 +12,8 @@ pub fn hashFile(file: fs.File) ![20]u8 {
     const seekable = file.seekableStream();
     const file_reader = file.reader();
     try hash_writer.print("{s} {d}\x00", .{ @tagName(ObjectType.blob), try seekable.getEndPos() });
-    var pump = std.fifo.LinearFifo(u8, .{ .Static = 4096 }){};
+    const Pump = std.fifo.LinearFifo(u8, .{ .Static = 4096 });
+    var pump = Pump.init();
     try seekable.seekTo(0);
     try pump.pump(file_reader, hash_writer);
     hash.final(&hash_buffer);

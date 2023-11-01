@@ -16,6 +16,7 @@ const writeIndex = index_zig.writeIndex;
 const addFilesToIndex = index_zig.addFilesToIndex;
 const addFileToIndex = index_zig.addFileToIndex;
 const removeFileFromIndex = index_zig.removeFileFromIndex;
+const modifiedFromIndex = index_zig.modifiedFromIndex;
 
 const helpers = @import("helpers.zig");
 const repoToGitDir = helpers.repoToGitDir;
@@ -372,6 +373,16 @@ pub fn main() !void {
                     .ref => |ref| std.debug.print("On branch {s}\n", .{ std.mem.trimLeft(u8, ref, "refs/heads/") }),
                     .object_name => |object_name| std.debug.print("Detached HEAD {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) }),
                 }
+            }
+            const modifed_from_index = try modifiedFromIndex(allocator, repo_path);
+            defer modifed_from_index.deinit();
+
+            std.debug.print("\n", .{});
+            for (modifed_from_index.entries.items) |entry| {
+                if (entry.status == .unmodified) {
+                    continue;
+                }
+                std.debug.print("{s}: {s}\n", .{ @tagName(entry.status), entry.path });
             }
         },
         .rm => {

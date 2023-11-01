@@ -6,9 +6,65 @@ const debug = std.debug;
 const testing = std.testing;
 
 const helpers = @import("helpers.zig");
+const object_zig = @import("object.zig");
 const repoToGitDir = helpers.repoToGitDir;
 
 const saveObject = @import("object.zig").saveObject;
+
+pub fn modifiedFromIndex(allocator: mem.Allocator, repo_path: []const u8) !*IndexDiff {
+    const index = try readIndex(allocator, repo_path);
+    defer index.deinit();
+
+    var diff_entries = IndexDiff.EntryList.init(allocator);
+
+    var path_buffer: [fs.MAX_PATH_BYTES]u8 = undefined;
+    for (index.entries.items) |entry| {
+        var path_allocator = std.heap.FixedBufferAllocator.init(&path_buffer);
+        const full_path = try fs.path.join(path_allocator.allocator(), &.{ repo_path, entry.path });
+        const file = fs.openFileAbsolute(full_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => {
+                try diff_entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .removed });
+                continue;
+            },
+            else => return err,
+        };
+        const file_hash = try object_zig.hashFile(file);
+        if (mem.eql(u8, &file_hash, &entry.object_name)) {
+            try diff_entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .unmodified });
+        } else {
+            try diff_entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .modified });
+        }
+    }
+
+    var index_diff = try allocator.create(IndexDiff);
+    index_diff.*.entries = diff_entries;
+    return index_diff;
+}
+
+const IndexDiff = struct {
+    entries: EntryList,
+
+    pub fn deinit(self: *const IndexDiff) void {
+        for (self.entries.items) |entry| {
+            self.entries.allocator.free(entry.path);
+        }
+        self.entries.deinit();
+        self.entries.allocator.destroy(self);
+    }
+
+    const EntryList = std.ArrayList(Entry);
+
+    const Entry = struct {
+        path: []const u8,
+        status: Status,
+    };
+
+    const Status = enum {
+        unmodified,
+        modified,
+        removed,
+    };
+};
 
 /// Returns a repo's current index
 pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
