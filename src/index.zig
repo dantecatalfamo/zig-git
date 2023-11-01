@@ -55,13 +55,13 @@ pub fn readIndex(allocator: mem.Allocator, repo_path: []const u8) !*Index {
         const mtime_n = try index_reader.readIntBig(u32);
         const dev = try index_reader.readIntBig(u32);
         const ino = try index_reader.readIntBig(u32);
-        const mode = @as(Index.Mode, @bitCast(try index_reader.readIntBig(u32)));
+        const mode: Index.Mode = @bitCast(try index_reader.readIntBig(u32));
         const uid = try index_reader.readIntBig(u32);
         const gid = try index_reader.readIntBig(u32);
         const file_size = try index_reader.readIntBig(u32);
         const object_name = try index_reader.readBytesNoEof(20);
 
-        const flags = @as(Index.Flags, @bitCast(try index_reader.readIntBig(u16)));
+        const flags: Index.Flags = @bitCast(try index_reader.readIntBig(u16));
         const extended_flags = blk: {
             if (header.version > 2 and flags.extended) {
                 const extra_flgs = try index_reader.readIntBig(u16);
@@ -267,16 +267,16 @@ pub fn fileToIndexEntry(allocator: mem.Allocator, repo_path: []const u8, file_pa
     const object_name = try saveObject(allocator, git_dir_path, data, .blob);
 
     const entry = Index.Entry{
-        .ctime_s = @as(u32, @intCast(stat.ctime().tv_sec)),
-        .ctime_n = @as(u32, @intCast(stat.ctime().tv_nsec)),
-        .mtime_s = @as(u32, @intCast(stat.mtime().tv_sec)),
-        .mtime_n = @as(u32, @intCast(stat.mtime().tv_nsec)),
-        .dev = @as(u32, @intCast(stat.dev)),
-        .ino = @as(u32, @intCast(stat.ino)),
-        .mode = @as(Index.Mode, @bitCast(@as(u32, stat.mode))),
+        .ctime_s = @intCast(stat.ctime().tv_sec),
+        .ctime_n = @intCast(stat.ctime().tv_nsec),
+        .mtime_s = @intCast(stat.mtime().tv_sec),
+        .mtime_n = @intCast(stat.mtime().tv_nsec),
+        .dev = @intCast(stat.dev),
+        .ino = @intCast(stat.ino),
+        .mode = @bitCast(@as(u32, stat.mode)),
         .uid = stat.uid,
         .gid = stat.gid,
-        .file_size = @as(u32, @intCast(stat.size)),
+        .file_size = @intCast(stat.size),
         .object_name = object_name,
         .flags = .{
             .name_length = name_len,
