@@ -350,6 +350,7 @@ pub fn main() !void {
         var commit: ?*Commit = null;
         commit = try readCommit(allocator, git_dir_path, commit_object_name);
 
+        std.debug.print("{s}: ", .{std.fmt.fmtSliceHexLower(&commit_object_name)});
         while (commit) |valid_commit| {
             const old_commit = valid_commit;
             defer old_commit.deinit();
@@ -358,6 +359,7 @@ pub fn main() !void {
             if (valid_commit.parents.items.len >= 1) {
                 // HACK We only look at the first parent, we should
                 // look at all (for merges, etc.)
+                std.debug.print("{s}: ", .{std.fmt.fmtSliceHexLower(&valid_commit.parents.items[0])});
                 commit = try readCommit(allocator, git_dir_path, valid_commit.parents.items[0]);
             } else {
                 commit = null;

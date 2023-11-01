@@ -28,7 +28,8 @@ pub fn restoreTree(allocator: mem.Allocator, repo_path: []const u8, tree_object_
 
     while (try tree_iter.next()) |entry| {
         if (entry.mode.object_type != .regular_file) {
-            // TODO Handle restoring other types of files
+            // TODO Handle restoring other types of files, being more
+            // efficient than just overwriting every file
             continue;
         }
         var path_allocator = std.heap.FixedBufferAllocator.init(&path_buffer);

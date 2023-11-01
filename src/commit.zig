@@ -170,7 +170,10 @@ pub const Commit = struct {
         }
         try out_stream.print("  Author: {}\n", .{ self.author });
         try out_stream.print("  Committer: {}\n", .{ self.committer });
-        try out_stream.print("  Message: {s}\n", .{ self.message });
+        try out_stream.print("  Message: {s}", .{ self.message });
+        if (self.message[self.message.len-1] != '\n') {
+            try out_stream.print("\n", .{});
+        }
         if (self.pgp_signature) |sig| {
             try out_stream.print("  PGP Signature:\n{s}\n", .{ sig });
         }
