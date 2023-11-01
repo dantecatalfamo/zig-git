@@ -51,6 +51,7 @@ const listRefs = ref_zig.listRefs;
 const readRef = ref_zig.readRef;
 const resolveHead = ref_zig.resolveHead;
 const currentHead = ref_zig.currentHead;
+const resolveRefOrObjectName = ref_zig.resolveRefOrObjectName;
 
 const tag_zig = @import("tag.zig");
 const readTag = tag_zig.readTag;
@@ -393,15 +394,21 @@ pub fn main() !void {
             try writeIndex(allocator, repo_path, index);
         },
         .checkout => {
-            const commit_name = args.next() orelse {
+            const ref_or_object_name = args.next() orelse {
                 std.debug.print("No commit specified\n", .{});
                 return;
             };
 
-            const commit_object_name = try hexDigestToObjectName(commit_name);
-
             const repo_path = try findRepoRoot(allocator);
             defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            const commit_object_name = try resolveRefOrObjectName(allocator, git_dir_path, ref_or_object_name) orelse {
+                std.debug.print("Invalid ref or commit hash\n", .{});
+                return;
+            };
 
             // TODO modify refs to detached HEAD state, actually restore
             // files, etc.

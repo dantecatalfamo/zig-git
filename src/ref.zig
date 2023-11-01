@@ -9,6 +9,16 @@ const helpers = @import("helpers.zig");
 const lessThanStrings = helpers.lessThanStrings;
 const hexDigestToObjectName = helpers.hexDigestToObjectName;
 
+/// Recursively resolves a ref or object name hash.
+/// Useful for processing user input.
+pub fn resolveRefOrObjectName(allocator: mem.Allocator, git_dir_path: []const u8, ref_or_object_name: []const u8) !?[20]u8 {
+    const resolved_ref = try resolveRef(allocator, git_dir_path, ref_or_object_name);
+    if (resolved_ref) |ref| {
+        return ref;
+    }
+    return hexDigestToObjectName(ref_or_object_name) catch null;
+}
+
 /// Recursively resolves the HEAD until an object name is found.
 pub fn resolveHead(allocator: mem.Allocator, git_dir_path: []const u8) !?[20]u8 {
     return try resolveRef(allocator, git_dir_path, "HEAD");
