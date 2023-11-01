@@ -19,11 +19,13 @@ pub fn modifiedFromIndex(allocator: mem.Allocator, repo_path: []const u8) !*Inde
 
     var path_buffer: [fs.MAX_PATH_BYTES]u8 = undefined;
     // TODO Look at file stats to tell if it's been modified without
-    // hashing first to avoid reading every file
+    // hashing first to avoid reading every file.
+    //
+    // TODO Check if file permissions have changed.
     for (index.entries.items) |entry| {
         var path_allocator = std.heap.FixedBufferAllocator.init(&path_buffer);
         const full_path = try fs.path.join(path_allocator.allocator(), &.{ repo_path, entry.path });
-        const file = fs.openFileAbsolute(full_path, .{}) catch |err| switch (err) {
+        const file = fs.cwd().openFile(full_path, .{}) catch |err| switch (err) {
             error.FileNotFound => {
                 try diff_entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .removed });
                 continue;
@@ -37,6 +39,41 @@ pub fn modifiedFromIndex(allocator: mem.Allocator, repo_path: []const u8) !*Inde
             try diff_entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .modified });
         }
     }
+
+    var all_path_set = std.BufSet.init(allocator);
+    defer all_path_set.deinit();
+
+    var index_path_set = std.BufSet.init(allocator);
+    defer index_path_set.deinit();
+
+    var dir_iterable = try fs.cwd().openIterableDir(repo_path, .{});
+    var walker = try dir_iterable.walk(allocator);
+    defer walker.deinit();
+
+    while (try walker.next()) |dir_entry| {
+        switch (dir_entry.kind) {
+            .sym_link, .file => {
+                if (mem.startsWith(u8, dir_entry.path, ".git") or mem.indexOf(u8, dir_entry.path, fs.path.sep_str ++ ".git") != null) {
+                    continue;
+                }
+                try all_path_set.insert(dir_entry.path);
+            },
+            else => continue,
+        }
+    }
+
+    for (index.entries.items) |entry| {
+        try index_path_set.insert(entry.path);
+    }
+
+    var all_path_iter = all_path_set.iterator();
+    while (all_path_iter.next()) |all_entry| {
+        if (!index_path_set.contains(all_entry.*)) {
+            try diff_entries.append(.{ .path = try allocator.dupe(u8, all_entry.*), .status = .untracked });
+        }
+    }
+
+    mem.sort(IndexDiff.Entry, diff_entries.items, {}, IndexDiff.Entry.lessThan);
 
     var index_diff = try allocator.create(IndexDiff);
     index_diff.*.entries = diff_entries;
@@ -59,9 +96,15 @@ const IndexDiff = struct {
     const Entry = struct {
         path: []const u8,
         status: Status,
+
+        pub fn lessThan(ctx: void, a: Entry, b: Entry) bool {
+            _ = ctx;
+            return mem.lessThan(u8, a.path, b.path);
+        }
     };
 
     const Status = enum {
+        untracked,
         unmodified,
         modified,
         removed,

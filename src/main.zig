@@ -379,7 +379,19 @@ pub fn main() !void {
 
             std.debug.print("\n", .{});
             for (modifed_from_index.entries.items) |entry| {
-                if (entry.status == .unmodified) {
+                if (entry.status != .modified) {
+                    continue;
+                }
+                std.debug.print("{s}: {s}\n", .{ @tagName(entry.status), entry.path });
+            }
+            for (modifed_from_index.entries.items) |entry| {
+                if (entry.status != .removed) {
+                    continue;
+                }
+                std.debug.print("{s}: {s}\n", .{ @tagName(entry.status), entry.path });
+            }
+            for (modifed_from_index.entries.items) |entry| {
+                if (entry.status != .untracked) {
                     continue;
                 }
                 std.debug.print("{s}: {s}\n", .{ @tagName(entry.status), entry.path });
