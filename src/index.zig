@@ -11,6 +11,7 @@ const repoToGitDir = helpers.repoToGitDir;
 
 const saveObject = @import("object.zig").saveObject;
 
+/// Compare the working area to the index file and return the results.
 pub fn modifiedFromIndex(allocator: mem.Allocator, repo_path: []const u8) !*IndexDiff {
     const index = try readIndex(allocator, repo_path);
     defer index.deinit();
@@ -104,9 +105,13 @@ const IndexDiff = struct {
     };
 
     const Status = enum {
+        /// The file is not tracked by the index
         untracked,
+        /// The file has not been modified compared to the index
         unmodified,
+        /// The file is different from the version tracked by the index
         modified,
+        /// The file is listed in the index, but does not exist on disk
         removed,
     };
 };
