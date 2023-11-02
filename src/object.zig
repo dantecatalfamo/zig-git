@@ -125,7 +125,7 @@ pub const ObjectReader = struct {
     }
 };
 
-/// Returns the data for an object
+/// Writes the data from an object to a writer
 pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8, writer: anytype) !ObjectHeader {
     var object_reader = try objectReader(allocator, git_dir_path, object_name);
     defer object_reader.deinit();

@@ -13,16 +13,22 @@ const index_zig = @import("index.zig");
 const Index = index_zig.Index;
 const IndexList = index_zig.IndexList;
 const readIndex = index_zig.readIndex;
+const addFileToIndex = index_zig.addFileToIndex;
+
+const object_zig = @import("object.zig");
 
 const helpers = @import("helpers.zig");
 const StringList = helpers.StringList;
 
-pub fn restoreTree(allocator: mem.Allocator, repo_path: []const u8, tree_object_name: [20]u8) !void {
+pub fn restoreTree(allocator: mem.Allocator, repo_path: []const u8, tree_object_name: [20]u8) !*Index {
     const git_dir_path = try helpers.repoToGitDir(allocator, repo_path);
     defer allocator.free(git_dir_path);
 
     var tree_iter = try walkTree(allocator, git_dir_path, tree_object_name);
     defer tree_iter.deinit();
+
+    var index = try Index.init(allocator);
+    errdefer index.deinit();
 
     var path_buffer: [fs.MAX_PATH_BYTES]u8 = undefined;
 
@@ -34,9 +40,21 @@ pub fn restoreTree(allocator: mem.Allocator, repo_path: []const u8, tree_object_
         }
         var path_allocator = std.heap.FixedBufferAllocator.init(&path_buffer);
         const entry_full_path = try fs.path.join(path_allocator.allocator(), &.{ repo_path, entry.path });
+        const object_name = entry.object_name;
 
-        std.debug.print("Restored File (Dry): [{s}] {s}, full_path: {s}\n", .{ std.fmt.fmtSliceHexLower(&entry.object_name), entry.path, entry_full_path });
+        const file = try fs.cwd().createFile(entry_full_path, .{});
+        errdefer file.close();
+
+        try object_zig.loadObject(allocator, git_dir_path, object_name, file.writer());
+        try file.sync();
+        file.close();
+
+        try addFileToIndex(allocator, repo_path, index, entry_full_path);
+
+        std.debug.print("Restored File: [{s}] {s}, full_path: {s}\n", .{ std.fmt.fmtSliceHexLower(&entry.object_name), entry.path, entry_full_path });
     }
+
+    return index;
 }
 
 pub fn readTree(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !Tree {
