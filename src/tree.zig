@@ -15,8 +15,6 @@ const IndexList = index_zig.IndexList;
 const readIndex = index_zig.readIndex;
 const addFileToIndex = index_zig.addFileToIndex;
 
-const object_zig = @import("object.zig");
-
 const helpers = @import("helpers.zig");
 const StringList = helpers.StringList;
 
@@ -45,7 +43,8 @@ pub fn restoreTree(allocator: mem.Allocator, repo_path: []const u8, tree_object_
         const file = try fs.cwd().createFile(entry_full_path, .{});
         errdefer file.close();
 
-        try object_zig.loadObject(allocator, git_dir_path, object_name, file.writer());
+        // TODO We could check I suppose, maybe later
+        _ = try object_zig.loadObject(allocator, git_dir_path, object_name, file.writer());
         try file.sync();
         file.close();
 

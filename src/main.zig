@@ -45,6 +45,7 @@ const restoreCommit = commit_zig.restoreCommit;
 const ref_zig = @import("ref.zig");
 const resolveRef = ref_zig.resolveRef;
 const currentRef = ref_zig.currentRef;
+const updateHead = ref_zig.updateHead;
 const updateRef = ref_zig.updateRef;
 const currentHeadRef = ref_zig.currentHeadRef;
 const listHeadRefs = ref_zig.listHeadRefs;
@@ -53,6 +54,7 @@ const readRef = ref_zig.readRef;
 const resolveHead = ref_zig.resolveHead;
 const currentHead = ref_zig.currentHead;
 const resolveRefOrObjectName = ref_zig.resolveRefOrObjectName;
+const cannonicalizeRef = ref_zig.cannonicalizeRef;
 
 const tag_zig = @import("tag.zig");
 const readTag = tag_zig.readTag;
@@ -433,9 +435,17 @@ pub fn main() !void {
                 return;
             };
 
-            // TODO modify refs to detached HEAD state, actually restore
-            // files, etc.
-            try restoreCommit(allocator, repo_path, commit_object_name);
+            const new_ref = try cannonicalizeRef(allocator, git_dir_path, ref_or_object_name) orelse {
+                std.debug.print("Invalid ref or commit hash\n", .{});
+                return;
+            };
+            defer new_ref.deinit(allocator);
+
+            const new_index = try restoreCommit(allocator, repo_path, commit_object_name);
+            defer new_index.deinit();
+
+            try writeIndex(allocator, repo_path, new_index);
+            try updateHead(allocator, git_dir_path, new_ref);
         }
     }
 }

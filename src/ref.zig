@@ -9,6 +9,23 @@ const helpers = @import("helpers.zig");
 const lessThanStrings = helpers.lessThanStrings;
 const hexDigestToObjectName = helpers.hexDigestToObjectName;
 
+/// Turns user input into a Ref
+pub fn cannonicalizeRef(allocator: mem.Allocator, git_dir_path: []const u8, ref_or_object_name: []const u8) !?Ref {
+    const expanded_ref = try expandRef(allocator, ref_or_object_name);
+    errdefer allocator.free(expanded_ref);
+
+    const resolved_ref = try readRef(allocator, git_dir_path, expanded_ref);
+    defer {
+        if (resolved_ref) |rr|
+            rr.deinit(allocator);
+    }
+    if (resolved_ref != null) {
+        return Ref{ .ref = expanded_ref };
+    }
+    const object_name = hexDigestToObjectName(ref_or_object_name) catch return null;
+    return Ref{ .object_name = object_name };
+}
+
 /// Recursively resolves a ref or object name hash.
 /// Useful for processing user input.
 pub fn resolveRefOrObjectName(allocator: mem.Allocator, git_dir_path: []const u8, ref_or_object_name: []const u8) !?[20]u8 {
@@ -58,6 +75,12 @@ pub fn expandRef(allocator: mem.Allocator, ref: []const u8) ![]const u8 {
     return error.InvalidRef;
 }
 
+
+/// Updates the target for HEAD
+pub fn updateHead(allocator: mem.Allocator, git_dir_path: []const u8, target: Ref) !void {
+    try updateRef(allocator, git_dir_path, "HEAD", target);
+}
+
 /// Updates the target for a ref
 pub fn updateRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8, target: Ref) !void {
     const full_path = try refToPath(allocator, git_dir_path, ref);
@@ -101,6 +124,8 @@ pub const Ref = union(enum) {
     }
 };
 
+// XXX Still not sure if an optional is the right interface here,
+// maybe it should just return an error in a ref doesn't exist.
 /// Returns the target of a ref
 pub fn readRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) !?Ref {
     const ref_path = try refToPath(allocator, git_dir_path, ref);
