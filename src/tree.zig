@@ -40,6 +40,13 @@ pub fn restoreTree(allocator: mem.Allocator, repo_path: []const u8, tree_object_
         const entry_full_path = try fs.path.join(path_allocator.allocator(), &.{ repo_path, entry.path });
         const object_name = entry.object_name;
 
+        const entry_dir_path = fs.path.dirname(entry_full_path);
+        if (entry_dir_path) |exists_path| {
+            fs.cwd().access(exists_path, .{}) catch {
+                try fs.cwd().makePath(exists_path);
+            };
+        }
+
         const file = try fs.cwd().createFile(entry_full_path, .{ .mode = entry.mode.unix_permissions });
         errdefer file.close();
 
