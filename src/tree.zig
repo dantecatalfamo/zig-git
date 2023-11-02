@@ -40,7 +40,7 @@ pub fn restoreTree(allocator: mem.Allocator, repo_path: []const u8, tree_object_
         const entry_full_path = try fs.path.join(path_allocator.allocator(), &.{ repo_path, entry.path });
         const object_name = entry.object_name;
 
-        const file = try fs.cwd().createFile(entry_full_path, .{});
+        const file = try fs.cwd().createFile(entry_full_path, .{ .mode = entry.mode.unix_permissions });
         errdefer file.close();
 
         // TODO We could check I suppose, maybe later
