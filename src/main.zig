@@ -441,6 +441,8 @@ pub fn main() !void {
             };
             defer new_ref.deinit(allocator);
 
+            // TODO doesn't remove files that were added since
+            // restored commit
             const new_index = try restoreCommit(allocator, repo_path, commit_object_name);
             defer new_index.deinit();
 

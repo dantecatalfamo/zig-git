@@ -12,7 +12,7 @@ const hexDigestToObjectName = helpers.hexDigestToObjectName;
 /// Turns user input into a Ref
 pub fn cannonicalizeRef(allocator: mem.Allocator, git_dir_path: []const u8, ref_or_object_name: []const u8) !?Ref {
     const expanded_ref = try expandRef(allocator, ref_or_object_name);
-    errdefer allocator.free(expanded_ref);
+    defer allocator.free(expanded_ref);
 
     const resolved_ref = try readRef(allocator, git_dir_path, expanded_ref);
     defer {
@@ -20,7 +20,7 @@ pub fn cannonicalizeRef(allocator: mem.Allocator, git_dir_path: []const u8, ref_
             rr.deinit(allocator);
     }
     if (resolved_ref != null) {
-        return Ref{ .ref = expanded_ref };
+        return Ref{ .ref = try allocator.dupe(u8, expanded_ref) };
     }
     const object_name = hexDigestToObjectName(ref_or_object_name) catch return null;
     return Ref{ .object_name = object_name };
