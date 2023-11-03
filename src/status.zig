@@ -54,7 +54,7 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
     var all_path_set = std.BufSet.init(allocator);
     defer all_path_set.deinit();
 
-    var index_path_set = std.BufSet.init(allocator);
+    var index_path_set = std.StringHashMap(*const [20]u8).init(allocator);
     defer index_path_set.deinit();
 
     var dir_iterable = try fs.cwd().openIterableDir(repo_path, .{});
@@ -74,12 +74,12 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
     }
 
     for (index.entries.items) |entry| {
-        try index_path_set.insert(entry.path);
+        try index_path_set.put(entry.path, &entry.object_name);
     }
 
     var all_path_iter = all_path_set.iterator();
     while (all_path_iter.next()) |all_entry| {
-        if (!index_path_set.contains(all_entry.*)) {
+        if (index_path_set.get(all_entry.*) != null) {
             try status_diff.entries.append(.{ .path = try allocator.dupe(u8, all_entry.*), .status = .untracked });
         }
     }
