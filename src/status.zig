@@ -79,7 +79,7 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
         }
     }
 
-    for (index.entries.items) |entry| {
+    for (index.entries.items) |*entry| {
         try index_path_set.put(entry.path, .{ .object_name = &entry.object_name, .mode = entry.mode });
     }
 
@@ -111,6 +111,15 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
 
         while (try tree_walker.next()) |tree_entry| {
             try tree_path_set.put(try allocator.dupe(u8, tree_entry.path), .{ .object_name = tree_entry.object_name, .mode = tree_entry.mode });
+            if (index_path_set.get(tree_entry.path)) |index_entry| {
+                // In index and tree
+                if (!mem.eql(u8, index_entry.object_name, &tree_entry.object_name)) {
+                    // Object names don't match
+                    try status_diff.entries.append(.{ .path = try allocator.dupe(u8, tree_entry.path), .status = .staged_modified, .object_name = tree_entry.object_name });
+                }
+            } else {
+                // In tree, not in index
+            }
         }
     }
 
@@ -119,10 +128,13 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
     return status_diff;
 }
 
+// NOTE These could probably be the same, using a pointer where a copy
+// isn't needed seems like it would be better, but I'm not sure it's
+// worth the dereference when it's only 20 bytes.
 const IndexObjectDetails = struct { object_name: *const [20]u8, mode: index_zig.Index.Mode };
 const TreeObjectDetails = struct { object_name: [20]u8, mode: index_zig.Index.Mode };
 
-const StatusDiff = struct {
+pub const StatusDiff = struct {
     entries: EntryList,
 
     pub fn init(allocator: mem.Allocator) !*StatusDiff {
@@ -141,7 +153,7 @@ const StatusDiff = struct {
 
     const EntryList = std.ArrayList(Entry);
 
-    const Entry = struct {
+    pub const Entry = struct {
         path: []const u8,
         status: Status,
         object_name: ?[20]u8,
@@ -152,13 +164,13 @@ const StatusDiff = struct {
         }
     };
 
-    const Status = enum {
+    pub const Status = enum {
         /// The file is modified and staged, but not yet committed
-        uncommitted_modified,
+        staged_modified,
         /// The file is removed from the index, but not yet committed
-        uncommitted_removed,
+        staged_removed,
         /// The file is added to the index, but not yet committed
-        uncommitted_added,
+        staged_added,
         /// The file is not tracked by the index
         untracked,
         /// The file has not been modified compared to the index

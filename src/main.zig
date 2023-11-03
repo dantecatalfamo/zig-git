@@ -384,6 +384,12 @@ pub fn main() !void {
 
             std.debug.print("\n", .{});
             for (modifed_from_index.entries.items) |entry| {
+                if (entry.status != .staged_modified) {
+                    continue;
+                }
+                std.debug.print("{s}: {s}: {s}\n", .{ @tagName(entry.status), entry.path, std.fmt.fmtSliceHexLower(&entry.object_name.?) });
+            }
+            for (modifed_from_index.entries.items) |entry| {
                 if (entry.status != .modified) {
                     continue;
                 }
