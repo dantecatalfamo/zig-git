@@ -59,6 +59,9 @@ const cannonicalizeRef = ref_zig.cannonicalizeRef;
 const tag_zig = @import("tag.zig");
 const readTag = tag_zig.readTag;
 
+const status_zig = @import("status.zig");
+const repoStatus = status_zig.repoStatus;
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 12 }){};
     var allocator = gpa.allocator();
@@ -376,7 +379,7 @@ pub fn main() !void {
                     .object_name => |object_name| std.debug.print("Detached HEAD {s}\n", .{ std.fmt.fmtSliceHexLower(&object_name) }),
                 }
             }
-            const modifed_from_index = try modifiedFromIndex(allocator, repo_path);
+            const modifed_from_index = try repoStatus(allocator, repo_path);
             defer modifed_from_index.deinit();
 
             std.debug.print("\n", .{});
