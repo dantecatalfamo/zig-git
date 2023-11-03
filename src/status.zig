@@ -21,7 +21,8 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
     const index = try readIndex(allocator, repo_path);
     defer index.deinit();
 
-    var diff_entries = StatusDiff.EntryList.init(allocator);
+    var status_diff = try StatusDiff.init(allocator);
+    errdefer status_diff.deinit();
 
     var path_buffer: [fs.MAX_PATH_BYTES]u8 = undefined;
     // TODO Look at file stats to tell if it's been modified without
@@ -31,17 +32,18 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
         const full_path = try fs.path.join(path_allocator.allocator(), &.{ repo_path, entry.path });
         const file = fs.cwd().openFile(full_path, .{}) catch |err| switch (err) {
             error.FileNotFound => {
-                try diff_entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .removed });
+                try status_diff.entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .removed });
                 continue;
             },
             else => return err,
         };
+        defer file.close();
         const file_hash = try object_zig.hashFile(file);
         const stat = try file.stat();
         if (mem.eql(u8, &file_hash, &entry.object_name) and stat.mode == @as(u32, @bitCast(entry.mode))) {
-            try diff_entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .unmodified });
+            try status_diff.entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .unmodified });
         } else {
-            try diff_entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .modified });
+            try status_diff.entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .modified });
         }
     }
 
@@ -74,20 +76,24 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
     var all_path_iter = all_path_set.iterator();
     while (all_path_iter.next()) |all_entry| {
         if (!index_path_set.contains(all_entry.*)) {
-            try diff_entries.append(.{ .path = try allocator.dupe(u8, all_entry.*), .status = .untracked });
+            try status_diff.entries.append(.{ .path = try allocator.dupe(u8, all_entry.*), .status = .untracked });
         }
     }
 
-    mem.sort(StatusDiff.Entry, diff_entries.items, {}, StatusDiff.Entry.lessThan);
+    mem.sort(StatusDiff.Entry, status_diff.entries.items, {}, StatusDiff.Entry.lessThan);
 
-    var index_diff = try allocator.create(StatusDiff);
-    index_diff.*.entries = diff_entries;
-    return index_diff;
+    return status_diff;
 }
 
 
 const StatusDiff = struct {
     entries: EntryList,
+
+    pub fn init(allocator: mem.Allocator) !*StatusDiff {
+        var status_diff = try allocator.create(StatusDiff);
+        status_diff.entries = EntryList.init(allocator);
+        return status_diff;
+    }
 
     pub fn deinit(self: *const StatusDiff) void {
         for (self.entries.items) |entry| {
