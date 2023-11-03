@@ -28,6 +28,10 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
     // TODO Look at file stats to tell if it's been modified without
     // hashing first to avoid reading every file.
     for (index.entries.items) |entry| {
+        if (entry.mode.object_type != .regular_file) {
+            // TODO Is it possible to check for gitlink and symlink updates?
+            continue;
+        }
         var path_allocator = std.heap.FixedBufferAllocator.init(&path_buffer);
         const full_path = try fs.path.join(path_allocator.allocator(), &.{ repo_path, entry.path });
         const file = fs.cwd().openFile(full_path, .{}) catch |err| switch (err) {
