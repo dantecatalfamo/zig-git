@@ -60,7 +60,7 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
     var all_path_set = std.BufSet.init(allocator);
     defer all_path_set.deinit();
 
-    var index_path_set = std.StringHashMap(IndexObjectDetails).init(allocator);
+    var index_path_set = std.StringHashMap(ObjectDetails).init(allocator);
     defer index_path_set.deinit();
 
     var dir_iterable = try fs.cwd().openIterableDir(repo_path, .{});
@@ -79,13 +79,13 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
         }
     }
 
-    for (index.entries.items) |*entry| {
-        try index_path_set.put(entry.path, .{ .object_name = &entry.object_name, .mode = entry.mode });
+    for (index.entries.items) |entry| {
+        try index_path_set.put(entry.path, .{ .object_name = entry.object_name, .mode = entry.mode });
     }
 
     var all_path_iter = all_path_set.iterator();
     while (all_path_iter.next()) |all_entry| {
-        if (index_path_set.get(all_entry.*) != null) {
+        if (index_path_set.get(all_entry.*) == null) {
             try status_diff.entries.append(.{ .path = try allocator.dupe(u8, all_entry.*), .status = .untracked, .object_name = null });
         }
     }
@@ -100,7 +100,7 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
         var tree_walker = try tree_zig.walkTree(allocator, git_dir_path, tree_object_name);
         defer tree_walker.deinit();
 
-        var tree_path_set = std.StringHashMap(TreeObjectDetails).init(allocator);
+        var tree_path_set = std.StringHashMap(ObjectDetails).init(allocator);
         defer {
             var iter = tree_path_set.iterator();
             while (iter.next()) |iter_entry| {
@@ -113,7 +113,7 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
             try tree_path_set.put(try allocator.dupe(u8, tree_entry.path), .{ .object_name = tree_entry.object_name, .mode = tree_entry.mode });
             if (index_path_set.get(tree_entry.path)) |index_entry| {
                 // In index and tree
-                if (!mem.eql(u8, index_entry.object_name, &tree_entry.object_name)) {
+                if (!mem.eql(u8, &index_entry.object_name, &tree_entry.object_name)) {
                     // Object names don't match
                     try status_diff.entries.append(.{ .path = try allocator.dupe(u8, tree_entry.path), .status = .staged_modified, .object_name = tree_entry.object_name });
                 }
@@ -128,11 +128,7 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
     return status_diff;
 }
 
-// NOTE These could probably be the same, using a pointer where a copy
-// isn't needed seems like it would be better, but I'm not sure it's
-// worth the dereference when it's only 20 bytes.
-const IndexObjectDetails = struct { object_name: *const [20]u8, mode: index_zig.Index.Mode };
-const TreeObjectDetails = struct { object_name: [20]u8, mode: index_zig.Index.Mode };
+const ObjectDetails = struct { object_name: [20]u8, mode: index_zig.Index.Mode };
 
 pub const StatusDiff = struct {
     entries: EntryList,
