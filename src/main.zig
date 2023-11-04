@@ -502,6 +502,7 @@ const SubCommands = enum {
     rm,
     root,
     status,
+    // TODO notes
 };
 
 /// TODO Restores the contents of a file from a commit and a path
