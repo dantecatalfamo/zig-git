@@ -55,6 +55,7 @@ pub fn resolveRef(allocator: mem.Allocator, git_dir_path: []const u8, ref: []con
     }
 }
 
+// FIXME This won't work on windows
 /// Returns the filesystem path to a ref
 /// Caller responsible for memory
 pub fn refToPath(allocator: mem.Allocator, git_dir_path: []const u8, ref: []const u8) ![]const u8 {
@@ -70,6 +71,7 @@ pub fn expandRef(allocator: mem.Allocator, ref: []const u8) ![]const u8 {
     if (mem.eql(u8, ref, "HEAD") or mem.startsWith(u8, ref, "refs/")) {
         return allocator.dupe(u8, ref);
     } else if (mem.indexOf(u8, ref, "/") == null) {
+        // FIXME This won't work on windows
         return fs.path.join(allocator, &.{ "refs/heads", ref });
     }
     return error.InvalidRef;
