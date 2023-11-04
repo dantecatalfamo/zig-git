@@ -385,7 +385,21 @@ pub fn main() !void {
             std.debug.print("\n", .{});
             var clean = true;
             for (modifed_from_index.entries.items) |entry| {
+                if (entry.status != .staged_added) {
+                    continue;
+                }
+                clean = false;
+                std.debug.print("{s}: {s}: {s}\n", .{ @tagName(entry.status), entry.path, std.fmt.fmtSliceHexLower(&entry.object_name.?) });
+            }
+            for (modifed_from_index.entries.items) |entry| {
                 if (entry.status != .staged_modified) {
+                    continue;
+                }
+                clean = false;
+                std.debug.print("{s}: {s}: {s}\n", .{ @tagName(entry.status), entry.path, std.fmt.fmtSliceHexLower(&entry.object_name.?) });
+            }
+            for (modifed_from_index.entries.items) |entry| {
+                if (entry.status != .staged_removed) {
                     continue;
                 }
                 clean = false;
@@ -400,20 +414,6 @@ pub fn main() !void {
             }
             for (modifed_from_index.entries.items) |entry| {
                 if (entry.status != .removed) {
-                    continue;
-                }
-                clean = false;
-                std.debug.print("{s}: {s}: {s}\n", .{ @tagName(entry.status), entry.path, std.fmt.fmtSliceHexLower(&entry.object_name.?) });
-            }
-            for (modifed_from_index.entries.items) |entry| {
-                if (entry.status != .staged_removed) {
-                    continue;
-                }
-                clean = false;
-                std.debug.print("{s}: {s}: {s}\n", .{ @tagName(entry.status), entry.path, std.fmt.fmtSliceHexLower(&entry.object_name.?) });
-            }
-            for (modifed_from_index.entries.items) |entry| {
-                if (entry.status != .staged_added) {
                     continue;
                 }
                 clean = false;
