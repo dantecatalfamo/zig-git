@@ -412,7 +412,13 @@ pub fn main() !void {
                 clean = false;
                 std.debug.print("{s}: {s}: {s}\n", .{ @tagName(entry.status), entry.path, std.fmt.fmtSliceHexLower(&entry.object_name.?) });
             }
-
+            for (modifed_from_index.entries.items) |entry| {
+                if (entry.status != .staged_added) {
+                    continue;
+                }
+                clean = false;
+                std.debug.print("{s}: {s}: {s}\n", .{ @tagName(entry.status), entry.path, std.fmt.fmtSliceHexLower(&entry.object_name.?) });
+            }
             // for (modifed_from_index.entries.items) |entry| {
             //     if (entry.status != .untracked) {
             //         continue;

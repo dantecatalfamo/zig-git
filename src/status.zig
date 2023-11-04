@@ -124,6 +124,15 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
                 try status_diff.entries.append(.{ .path = try allocator.dupe(u8, tree_entry.path), .status = .staged_removed, .object_name = tree_entry.object_name });
             }
         }
+
+        var index_iter = index_path_set.iterator();
+        while (index_iter.next()) |index_entry| {
+            if (tree_path_set.contains(index_entry.key_ptr.*)) {
+                continue;
+            }
+            // In index, not in tree
+            try status_diff.entries.append(.{ .path = try allocator.dupe(u8, index_entry.key_ptr.*), .status = .staged_added, .object_name = index_entry.value_ptr.object_name });
+        }
     }
 
     mem.sort(StatusDiff.Entry, status_diff.entries.items, {}, StatusDiff.Entry.lessThan);
