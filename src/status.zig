@@ -49,9 +49,7 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
         defer file.close();
         const file_hash = try object_zig.hashFile(file);
         const stat = try file.stat();
-        if (mem.eql(u8, &file_hash, &entry.object_name) and stat.mode == @as(u32, @bitCast(entry.mode))) {
-            try status_diff.entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .unmodified, .object_name = entry.object_name });
-        } else {
+        if (!mem.eql(u8, &file_hash, &entry.object_name) or stat.mode != @as(u32, @bitCast(entry.mode))) {
             try status_diff.entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .modified, .object_name = file_hash });
         }
     }
