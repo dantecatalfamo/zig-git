@@ -117,6 +117,11 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
                 }
             } else {
                 // In tree, not in index
+                // TODO How to deal with staged removal of non-regular files
+                if (tree_entry.mode.object_type != .regular_file) {
+                    continue;
+                }
+                try status_diff.entries.append(.{ .path = try allocator.dupe(u8, tree_entry.path), .status = .staged_removed, .object_name = tree_entry.object_name });
             }
         }
     }
