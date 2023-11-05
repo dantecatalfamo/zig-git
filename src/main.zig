@@ -62,6 +62,9 @@ const readTag = tag_zig.readTag;
 const status_zig = @import("status.zig");
 const repoStatus = status_zig.repoStatus;
 
+const pack_zig = @import("pack.zig");
+const Pack = pack_zig.Pack;
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 12 }){};
     var allocator = gpa.allocator();
@@ -333,6 +336,32 @@ pub fn main() !void {
 
             std.debug.print("{}\n", .{ tag });
         },
+        .@"read-pack" => {
+            const pack_name = args.next() orelse {
+                std.debug.print("No pack specified\n", .{});
+                return;
+            };
+
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            const packfile_name = try std.fmt.allocPrint(allocator, "pack-{s}.pack", .{ pack_name });
+            defer allocator.free(packfile_name);
+
+            const pack_path = try fs.path.join(allocator, &.{ git_dir_path, "objects", "pack", packfile_name });
+            defer allocator.free(pack_path);
+
+            const pack_file = try fs.cwd().openFile(pack_path, .{});
+            defer pack_file.close();
+
+            const pack = try Pack.init(allocator, pack_file);
+            defer pack.deinit();
+
+            std.debug.print("{any}\n", .{ pack });
+        },
         .log => {
             const repo_path = try findRepoRoot(allocator);
             defer allocator.free(repo_path);
@@ -498,6 +527,7 @@ const SubCommands = enum {
     @"read-ref",
     @"read-tag",
     @"read-tree",
+    @"read-pack",
     refs,
     rm,
     root,
