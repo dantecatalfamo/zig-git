@@ -17,6 +17,10 @@ pub const Pack = struct {
         const version = try reader.readIntBig(u32);
         const number_objects = try reader.readIntBig(u32);
 
+        if (version != 2) {
+            return error.UnsupportedPackVersion;
+        }
+
         var pack = try allocator.create(Pack);
         pack.* = Pack {
             .allocator = allocator,
