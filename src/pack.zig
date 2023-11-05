@@ -125,11 +125,14 @@ pub const ObjectIterator = struct {
         defer object_reader_hash.deinit();
 
         var hasher = std.crypto.hash.Sha1.init(.{});
-        const hash_writer = hasher.writer();
-        _ = hash_writer;
+        const hasher_writer = hasher.writer();
+
+        // FIXME This works for normal objects, we don't know how to
+        // handle deltas yet and this might need to change
+        try hasher_writer.print("{s} {d}\x00", .{ @tagName(object_reader_hash.header.type), object_reader_hash.header.size });
 
         var pump = std.fifo.LinearFifo(u8, .{ .Static = 4094 }).init();
-        try pump.pump(object_reader_hash.reader(), hasher.writer());
+        try pump.pump(object_reader_hash.reader(), hasher_writer);
 
         const object_name = hasher.finalResult();
 
