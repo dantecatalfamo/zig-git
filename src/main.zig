@@ -361,6 +361,19 @@ pub fn main() !void {
             defer pack.deinit();
 
             std.debug.print("{any}\n", .{ pack });
+            const first_object_reader = try pack.readObjectAt(try pack_file.seekableStream().getPos());
+            defer first_object_reader.deinit();
+
+            std.debug.print("First object: {any}\n", .{ first_object_reader.header });
+            var rrr = first_object_reader.reader();
+            const read = try rrr.readAllAlloc(allocator, 1024 * 1024 * 10);
+            defer allocator.free(read);
+
+            const second_object_reader = try pack.readObjectAt(try pack_file.seekableStream().getPos());
+            defer second_object_reader.deinit();
+
+            std.debug.print("Second object: {any}\n", .{ second_object_reader.header });
+
         },
         .log => {
             const repo_path = try findRepoRoot(allocator);
