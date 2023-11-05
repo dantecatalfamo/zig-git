@@ -103,7 +103,7 @@ pub const ObjectReader = struct {
         const object_type = std.meta.stringToEnum(ObjectType, header_iter.first()) orelse return error.InvalidObjectType;
         const size = blk: {
             const s = header_iter.next() orelse return error.InvalidObjectSize;
-            const n = try std.fmt.parseInt(u32, s, 10);
+            const n = try std.fmt.parseInt(usize, s, 10);
             break :blk n;
         };
 
@@ -140,7 +140,7 @@ pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_nam
 
 pub const ObjectHeader = struct {
     type: ObjectType,
-    size: u32,
+    size: usize,
 };
 
 pub const ObjectType = enum {
