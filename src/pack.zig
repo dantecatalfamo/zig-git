@@ -129,6 +129,7 @@ pub const ObjectIterator = struct {
 
         // FIXME This works for normal objects, we don't know how to
         // handle deltas yet and this might need to change
+        // TODO It seems this hashing doesn't work properly yet
         try hasher_writer.print("{s} {d}\x00", .{ @tagName(object_reader_hash.header.type), object_reader_hash.header.size });
 
         var pump = std.fifo.LinearFifo(u8, .{ .Static = 4094 }).init();
@@ -136,6 +137,9 @@ pub const ObjectIterator = struct {
 
         const object_name = hasher.finalResult();
 
+        // FIXME Something about this is very broken, hashing creates
+        // the wrong checksum but is fine, the returned hasher gets
+        // the wrong checksum if fully read
         self.current_object_reader = try self.pack.readObjectAt(object_begin);
 
         return Entry{
@@ -146,6 +150,12 @@ pub const ObjectIterator = struct {
 
     pub fn reset(self: *ObjectIterator) !void {
         try self.pack.file.seekTo(12);
+    }
+
+    pub fn deinit(self: *ObjectIterator) void {
+        if (self.current_object_reader) |*current| {
+            current.deinit();
+        }
     }
 
     pub const Entry = struct {
