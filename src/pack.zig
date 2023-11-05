@@ -46,7 +46,7 @@ pub const Pack = struct {
         try out_stream.print("Pack{{ signature = {s}, version = {d}, number_objects = {d} }}", .{ self.header.signature, self.header.version, self.header.number_objects });
     }
 
-    pub fn readObjectAt(self: Pack, offset: usize) !*ObjectReader {
+    pub fn readObjectAt(self: Pack, offset: usize) !ObjectReader {
         var size: u64 = 0;
         try self.file.seekTo(offset);
         const reader = self.file.reader();
@@ -68,19 +68,82 @@ pub const Pack = struct {
             .type = object_type,
         };
 
-        var object_reader = try self.allocator.create(ObjectReader);
-        errdefer self.allocator.destroy(object_reader);
-
-        object_reader.* = ObjectReader{
+        return ObjectReader{
             .decompressor = decompressor,
             .file = self.file,
             .header = header,
         };
+    }
 
-        return object_reader;
+    pub fn iterate(self: *Pack) !ObjectIterator {
+        return try ObjectIterator.init(self);
     }
 };
 
+
+pub const ObjectIterator = struct {
+    pack: *Pack,
+    current_object_reader: ?ObjectReader = null,
+
+    pub fn init(pack: *Pack) !ObjectIterator {
+        // Reset to right after the header
+        try pack.file.seekTo(12);
+
+        return ObjectIterator{
+            .pack = pack,
+        };
+    }
+
+    pub fn next(self: *ObjectIterator) !?Entry {
+        // Finish existing decompressor so we're at the end of the
+        // current object
+        if (self.current_object_reader) |*existing_reader| {
+            var waste_buffer: [4096]u8 = undefined;
+            const reader = existing_reader.reader();
+            while (try reader.read(&waste_buffer) != 0) {}
+            existing_reader.deinit();
+        }
+        self.current_object_reader = null;
+
+        if (try self.pack.file.getPos() == try self.pack.file.getEndPos()) {
+            return null;
+        }
+
+        // Create new decompressor at current position, hash object
+        // contents, reset decompressor and file position, pass new
+        // decompressor to caller
+
+        const object_begin = try self.pack.file.getPos();
+
+        var hasher = std.crypto.hash.Sha1.init(.{});
+        const hash_writer = hasher.writer();
+        _ = hash_writer;
+
+        var object_reader_hash = try self.pack.readObjectAt(object_begin);
+        defer object_reader_hash.deinit();
+
+        var pump = std.fifo.LinearFifo(u8, .{ .Static = 4094 }).init();
+        try pump.pump(object_reader_hash.reader(), hasher.writer());
+
+        const object_name = hasher.finalResult();
+
+        self.current_object_reader = try self.pack.readObjectAt(object_begin);
+
+        return Entry{
+            .object_name = object_name,
+            .object_reader = &self.current_object_reader.?,
+        };
+    }
+
+    pub fn reset(self: *ObjectIterator) !void {
+        try self.pack.file.seekTo(12);
+    }
+
+    pub const Entry = struct {
+        object_name: [20]u8,
+        object_reader: *ObjectReader,
+    };
+};
 
 pub const Header = struct {
     signature: [4]u8,
@@ -112,7 +175,6 @@ pub const ObjectReader = struct {
 
     pub fn deinit(self: *ObjectReader) void {
         self.decompressor.deinit();
-        self.decompressor.allocator.destroy(self);
     }
 };
 
