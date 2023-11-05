@@ -60,6 +60,12 @@ pub const Pack = struct {
             size += byte & (0xFF >> 1);
         }
 
+        // TODO get these to work
+        if (object_type == .ofs_delta or object_type == .ref_delta) {
+            std.debug.print("Cannot read {s} yet\n", .{ @tagName(object_type) });
+            return error.Unimplemented;
+        }
+
         var decompressor = try std.compress.zlib.decompressStream(self.allocator, reader);
         errdefer decompressor.deinit();
 
@@ -115,12 +121,12 @@ pub const ObjectIterator = struct {
 
         const object_begin = try self.pack.file.getPos();
 
+        var object_reader_hash = try self.pack.readObjectAt(object_begin);
+        defer object_reader_hash.deinit();
+
         var hasher = std.crypto.hash.Sha1.init(.{});
         const hash_writer = hasher.writer();
         _ = hash_writer;
-
-        var object_reader_hash = try self.pack.readObjectAt(object_begin);
-        defer object_reader_hash.deinit();
 
         var pump = std.fifo.LinearFifo(u8, .{ .Static = 4094 }).init();
         try pump.pump(object_reader_hash.reader(), hasher.writer());
