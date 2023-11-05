@@ -75,7 +75,7 @@ pub const Pack = struct {
         };
     }
 
-    pub fn iterate(self: *Pack) !ObjectIterator {
+    pub fn iterator(self: *Pack) !ObjectIterator {
         return try ObjectIterator.init(self);
     }
 };

@@ -362,7 +362,7 @@ pub fn main() !void {
 
             std.debug.print("{any}\n", .{ pack });
 
-            var iter = try pack.iterate();
+            var iter = try pack.iterator();
             while (try iter.next()) |entry| {
                 std.debug.print("{s}: {any}\n", .{ std.fmt.fmtSliceHexLower(&entry.object_name), entry.object_reader.header });
             }
