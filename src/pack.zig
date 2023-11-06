@@ -46,12 +46,6 @@ pub const Pack = struct {
         try out_stream.print("Pack{{ signature = {s}, version = {d}, number_objects = {d} }}", .{ self.header.signature, self.header.version, self.header.number_objects });
     }
 
-    const FirstBit = packed struct(u8) {
-        size: u4,
-        type: ObjectType,
-        more: bool,
-    };
-
     pub fn readObjectAt(self: Pack, offset: usize) !ObjectReader {
         var size: u64 = 0;
         try self.file.seekTo(offset);
@@ -90,6 +84,12 @@ pub const Pack = struct {
             .header = header,
         };
     }
+
+    const FirstBit = packed struct(u8) {
+        size: u4,
+        type: ObjectType,
+        more: bool,
+    };
 
     pub fn iterator(self: *Pack) !ObjectIterator {
         return try ObjectIterator.init(self);
