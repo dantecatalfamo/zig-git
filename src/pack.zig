@@ -46,18 +46,28 @@ pub const Pack = struct {
         try out_stream.print("Pack{{ signature = {s}, version = {d}, number_objects = {d} }}", .{ self.header.signature, self.header.version, self.header.number_objects });
     }
 
+    const FirstBit = packed struct(u8) {
+        size: u4,
+        type: ObjectType,
+        more: bool,
+    };
+
     pub fn readObjectAt(self: Pack, offset: usize) !ObjectReader {
         var size: u64 = 0;
         try self.file.seekTo(offset);
         const reader = self.file.reader();
         const first_byte = try reader.readByte();
-        const object_type: ObjectType = @enumFromInt(first_byte >> 5);
-        size += first_byte & (0xFF >> 3);
-        var more = true;
+        const first_bits: FirstBit = @bitCast(first_byte);
+        const object_type = first_bits.type;
+        size += first_bits.size;
+        var more: bool = first_bits.more;
+        var shifts: u6 = 4;
         while (more) {
             const byte = try reader.readByte();
-            more = if ((byte & (1 << 7)) == 0) false else true;
-            size += byte & (0xFF >> 1);
+            more = if (byte >> 7 == 0) false else true;
+            const more_size_bits: u64 = byte & (0xFF >> 1);
+            size += (more_size_bits << shifts);
+            shifts += 7;
         }
 
         // TODO get these to work
@@ -90,13 +100,13 @@ pub const Pack = struct {
 pub const ObjectIterator = struct {
     pack: *Pack,
     current_object_reader: ?ObjectReader = null,
+    current_end_pos: usize,
 
     pub fn init(pack: *Pack) !ObjectIterator {
         // Reset to right after the header
-        try pack.file.seekTo(12);
-
         return ObjectIterator{
             .pack = pack,
+            .current_end_pos = 12,
         };
     }
 
@@ -104,9 +114,6 @@ pub const ObjectIterator = struct {
         // Finish existing decompressor so we're at the end of the
         // current object
         if (self.current_object_reader) |*existing_reader| {
-            var waste_buffer: [4096]u8 = undefined;
-            const reader = existing_reader.reader();
-            while (try reader.read(&waste_buffer) != 0) {}
             existing_reader.deinit();
         }
         self.current_object_reader = null;
@@ -126,14 +133,23 @@ pub const ObjectIterator = struct {
 
         var hasher = std.crypto.hash.Sha1.init(.{});
         const hasher_writer = hasher.writer();
+        var counting_writer = std.io.countingWriter(hasher_writer);
 
         // FIXME This works for normal objects, we don't know how to
         // handle deltas yet and this might need to change
-        // TODO It seems this hashing doesn't work properly yet
+        //
+        // Create object header just like in loose object file
         try hasher_writer.print("{s} {d}\x00", .{ @tagName(object_reader_hash.header.type), object_reader_hash.header.size });
 
         var pump = std.fifo.LinearFifo(u8, .{ .Static = 4094 }).init();
-        try pump.pump(object_reader_hash.reader(), hasher_writer);
+        try pump.pump(object_reader_hash.reader(), counting_writer.writer());
+
+        self.current_end_pos = try self.pack.file.getPos();
+
+        if (counting_writer.bytes_written != object_reader_hash.header.size) {
+            std.debug.print("Size in header: {d}, size written: {d}, diff: {d}\n", .{ counting_writer.bytes_written, object_reader_hash.header.size, object_reader_hash.header.size - counting_writer.bytes_written });
+            return error.PackObjectSizeMismatch;
+        }
 
         const object_name = hasher.finalResult();
 
