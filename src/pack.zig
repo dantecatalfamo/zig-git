@@ -70,7 +70,6 @@ pub const Pack = struct {
 
         return ObjectReader{
             .decompressor = decompressor,
-            .file = self.file,
             .header = object_header,
         };
     }
@@ -274,7 +273,6 @@ pub const ObjectType = enum(u3) {
 
 pub const ObjectReader = struct {
     decompressor: Decompressor,
-    file: fs.File,
     header: ObjectHeader,
 
     const Decompressor = std.compress.zlib.DecompressStream(fs.File.Reader);
