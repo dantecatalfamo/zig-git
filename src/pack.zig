@@ -47,54 +47,60 @@ pub const Pack = struct {
     }
 
     pub fn readObjectAt(self: Pack, offset: usize) !ObjectReader {
-        var size: u64 = 0;
         try self.file.seekTo(offset);
         const reader = self.file.reader();
-        const first_byte = try reader.readByte();
-        const first_bits: FirstBit = @bitCast(first_byte);
-        const object_type = first_bits.type;
-        size += first_bits.size;
-        var more: bool = first_bits.more;
-        var shifts: u6 = 4;
-        while (more) {
-            const byte = try reader.readByte();
-            more = if (byte >> 7 == 0) false else true;
-            const more_size_bits: u64 = byte & (0xFF >> 1);
-            size += (more_size_bits << shifts);
-            shifts += 7;
-        }
+        const object_header = try parseObjectHeader(reader);
 
         // TODO get these to work
-        if (object_type == .ofs_delta or object_type == .ref_delta) {
-            std.debug.print("Cannot read {s} yet\n", .{ @tagName(object_type) });
+        if (object_header.type == .ofs_delta or object_header.type == .ref_delta) {
+            std.debug.print("Cannot read {s} yet\n", .{ @tagName(object_header.type) });
+            std.debug.print("Size: {d}\n", .{ object_header.size });
             return error.Unimplemented;
         }
 
         var decompressor = try std.compress.zlib.decompressStream(self.allocator, reader);
         errdefer decompressor.deinit();
 
-        const header = ObjectHeader{
-            .size = size,
-            .type = object_type,
-        };
-
         return ObjectReader{
             .decompressor = decompressor,
             .file = self.file,
-            .header = header,
+            .header = object_header,
         };
     }
-
-    const FirstBit = packed struct(u8) {
-        size: u4,
-        type: ObjectType,
-        more: bool,
-    };
 
     pub fn iterator(self: *Pack) !ObjectIterator {
         return try ObjectIterator.init(self);
     }
 };
+
+pub fn parseObjectHeader(reader: anytype) !ObjectHeader {
+    var size: usize = 0;
+    const first_byte = try reader.readByte();
+    const first_bits: ObjectFirstBit = @bitCast(first_byte);
+    const object_type = first_bits.type;
+    size += first_bits.size;
+    var more: bool = first_bits.more;
+    var shifts: u6 = 4;
+    while (more) {
+        const byte = try reader.readByte();
+        more = if (byte >> 7 == 0) false else true;
+        const more_size_bits: u64 = byte & (0xFF >> 1);
+        size += (more_size_bits << shifts);
+        shifts += 7;
+    }
+
+    return ObjectHeader{
+        .size = size,
+        .type = object_type,
+    };
+}
+
+const ObjectFirstBit = packed struct(u8) {
+    size: u4,
+    type: ObjectType,
+    more: bool,
+};
+
 
 
 pub const ObjectIterator = struct {
