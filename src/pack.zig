@@ -197,7 +197,8 @@ pub const ObjectIterator = struct {
         }
         self.current_object_reader = null;
 
-        if (try self.pack.file.getPos() == try self.pack.file.getEndPos()) {
+        // Account for the 20 byte pack sha1 checksum trailer
+        if (self.current_end_pos + 20 == try self.pack.file.getEndPos()) {
             return null;
         }
 
