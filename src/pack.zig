@@ -55,7 +55,14 @@ pub const Pack = struct {
         if (object_header.type == .ofs_delta or object_header.type == .ref_delta) {
             std.debug.print("Cannot read {s} yet\n", .{ @tagName(object_header.type) });
             std.debug.print("Size: {d}\n", .{ object_header.size });
-            return error.Unimplemented;
+            if (object_header.type == .ofs_delta) {
+                const base_offset = try parseVariableLength(reader);
+                std.debug.print("Base offset: {d}\n", .{ base_offset });
+            } else {
+                const ref_object_name = try reader.readBytesNoEof(20);
+                std.debug.print("Ref object name: {s}\n", .{ std.fmt.fmtSliceHexLower(&ref_object_name) });
+            }
+            // return error.Unimplemented;
         }
 
         var decompressor = try std.compress.zlib.decompressStream(self.allocator, reader);
@@ -71,6 +78,72 @@ pub const Pack = struct {
     pub fn iterator(self: *Pack) !ObjectIterator {
         return try ObjectIterator.init(self);
     }
+};
+
+pub fn parseDeltaInstructions(allocator: mem.Allocator, size: usize, reader: anytype) void {
+    _ = size;
+    var decompressor = try std.compress.zlib.decompressStream(allocator, reader);
+    const decompressor_reader = decompressor.reader();
+    var deltas = std.ArrayList(Delta).init(allocator);
+    _ = deltas;
+
+    const first_byte = try reader.readByte();
+    const first_bit = first_byte >> 7;
+    const remainder_bits = first_byte & 0b01111111;
+    _ = remainder_bits;
+    if (first_bit == 1) {
+        // Copy
+        var offset: u32 = 0;
+        _ = offset;
+        var offset_size: u32 = 0;
+        _ = offset_size;
+    } else {
+        // Data
+    }
+    _ = decompressor_reader;
+}
+
+pub const DeltaInstructions = struct {
+    allocator: mem.Allocator,
+    deltas: []Delta,
+
+    pub fn deinit(self: DeltaInstructions) void {
+        for (self.deltas) |delta| {
+            switch (delta) {
+                .copy => {},
+                .data => |dlt| { self.allocator.free(dlt); }
+            }
+        }
+        self.allocator.free(self.deltas);
+    }
+};
+
+pub const Delta = union(enum) {
+    copy: Copy,
+    data: []const u8,
+
+    pub const Copy = struct {
+        offset: u32,
+        size: u32,
+    };
+};
+
+pub fn parseVariableLength(reader: anytype) !usize {
+    var size: usize = 0;
+    var shift: u6 = 0;
+    var more = true;
+    while (more) {
+        var byte: VariableLengthByte = @bitCast(try reader.readByte());
+        size += @as(usize, byte.size) << shift;
+        shift += 7;
+        more = byte.more;
+    }
+    return size;
+}
+
+const VariableLengthByte = packed struct(u8) {
+    size: u7,
+    more: bool,
 };
 
 pub fn parseObjectHeader(reader: anytype) !ObjectHeader {
