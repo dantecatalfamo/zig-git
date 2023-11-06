@@ -366,10 +366,7 @@ pub fn main() !void {
             defer iter.deinit();
 
             while (try iter.next()) |entry| {
-                var pump = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
                 std.debug.print("{s}: {any}\n", .{ std.fmt.fmtSliceHexLower(&entry.object_name), entry.object_reader.header });
-                const stderr = std.io.getStdErr().writer();
-                try pump.pump(entry.object_reader.reader(), stderr);
             }
         },
         .log => {

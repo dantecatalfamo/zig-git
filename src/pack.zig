@@ -126,7 +126,7 @@ pub const ObjectIterator = struct {
         // contents, reset decompressor and file position, pass new
         // decompressor to caller
 
-        const object_begin = try self.pack.file.getPos();
+        const object_begin = self.current_end_pos;
 
         var object_reader_hash = try self.pack.readObjectAt(object_begin);
         defer object_reader_hash.deinit();
