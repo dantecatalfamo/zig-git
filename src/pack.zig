@@ -153,9 +153,7 @@ pub const ObjectIterator = struct {
 
         const object_name = hasher.finalResult();
 
-        // FIXME Something about this is very broken, hashing creates
-        // the wrong checksum but is fine, the returned hasher gets
-        // the wrong checksum if fully read
+        // Create fresh reader for caller
         self.current_object_reader = try self.pack.readObjectAt(object_begin);
 
         return Entry{
