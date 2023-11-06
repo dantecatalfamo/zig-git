@@ -147,7 +147,6 @@ pub const ObjectIterator = struct {
         self.current_end_pos = try self.pack.file.getPos();
 
         if (counting_writer.bytes_written != object_reader_hash.header.size) {
-            std.debug.print("Size in header: {d}, size written: {d}, diff: {d}\n", .{ counting_writer.bytes_written, object_reader_hash.header.size, object_reader_hash.header.size - counting_writer.bytes_written });
             return error.PackObjectSizeMismatch;
         }
 
