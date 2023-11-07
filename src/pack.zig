@@ -17,6 +17,10 @@ pub const Pack = struct {
         const version = try reader.readIntBig(u32);
         const number_objects = try reader.readIntBig(u32);
 
+        if (!mem.eql(u8, &signature, "PACK")) {
+            return error.UnsupportedPackFile;
+        }
+
         if (version != 2) {
             return error.UnsupportedPackVersion;
         }
