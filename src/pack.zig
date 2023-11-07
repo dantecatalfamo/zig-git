@@ -51,20 +51,6 @@ pub const Pack = struct {
         const reader = self.file.reader();
         const object_header = try parseObjectHeader(reader);
 
-        // TODO get these to work
-        if (object_header.type == .ofs_delta or object_header.type == .ref_delta) {
-            std.debug.print("Cannot read {s} yet\n", .{ @tagName(object_header.type) });
-            std.debug.print("Size: {d}\n", .{ object_header.size });
-            if (object_header.type == .ofs_delta) {
-                const base_offset = try parseVariableLength(reader);
-                std.debug.print("Base offset: {d}\n", .{ base_offset });
-            } else {
-                const ref_object_name = try reader.readBytesNoEof(20);
-                std.debug.print("Ref object name: {s}\n", .{ std.fmt.fmtSliceHexLower(&ref_object_name) });
-            }
-            // return error.Unimplemented;
-        }
-
         var decompressor = try std.compress.zlib.decompressStream(self.allocator, reader);
         errdefer decompressor.deinit();
 
@@ -77,54 +63,6 @@ pub const Pack = struct {
     pub fn iterator(self: *Pack) !ObjectIterator {
         return try ObjectIterator.init(self);
     }
-};
-
-pub fn parseDeltaInstructions(allocator: mem.Allocator, size: usize, reader: anytype) void {
-    _ = size;
-    var decompressor = try std.compress.zlib.decompressStream(allocator, reader);
-    const decompressor_reader = decompressor.reader();
-    var deltas = std.ArrayList(Delta).init(allocator);
-    _ = deltas;
-
-    const first_byte = try reader.readByte();
-    const first_bit = first_byte >> 7;
-    const remainder_bits = first_byte & 0b01111111;
-    _ = remainder_bits;
-    if (first_bit == 1) {
-        // Copy
-        var offset: u32 = 0;
-        _ = offset;
-        var offset_size: u32 = 0;
-        _ = offset_size;
-    } else {
-        // Data
-    }
-    _ = decompressor_reader;
-}
-
-pub const DeltaInstructions = struct {
-    allocator: mem.Allocator,
-    deltas: []Delta,
-
-    pub fn deinit(self: DeltaInstructions) void {
-        for (self.deltas) |delta| {
-            switch (delta) {
-                .copy => {},
-                .data => |dlt| { self.allocator.free(dlt); }
-            }
-        }
-        self.allocator.free(self.deltas);
-    }
-};
-
-pub const Delta = union(enum) {
-    copy: Copy,
-    data: []const u8,
-
-    pub const Copy = struct {
-        offset: u32,
-        size: u32,
-    };
 };
 
 pub fn parseVariableLength(reader: anytype) !usize {
@@ -161,9 +99,18 @@ pub fn parseObjectHeader(reader: anytype) !ObjectHeader {
         shifts += 7;
     }
 
+    var delta_header: ?ObjectHeader.Delta = null;
+    if (object_type == .ofs_delta) {
+        delta_header = ObjectHeader.Delta{ .offset = try parseVariableLength(reader) };
+    }
+    if (object_type == .ref_delta) {
+        delta_header = ObjectHeader.Delta{ .ref = try reader.readBytesNoEof(20) };
+    }
+
     return ObjectHeader{
         .size = size,
         .type = object_type,
+        .delta = delta_header,
     };
 }
 
@@ -214,10 +161,8 @@ pub const ObjectIterator = struct {
         const hasher_writer = hasher.writer();
         var counting_writer = std.io.countingWriter(hasher_writer);
 
-        // FIXME This works for normal objects, we don't know how to
-        // handle deltas yet and this might need to change
-        //
-        // Create object header just like in loose object file
+        // Create object header just like in loose object file.
+        // These don't work for delta objects.
         try hasher_writer.print("{s} {d}\x00", .{ @tagName(object_reader_hash.header.type), object_reader_hash.header.size });
 
         var pump = std.fifo.LinearFifo(u8, .{ .Static = 4094 }).init();
@@ -292,4 +237,10 @@ pub const ObjectReader = struct {
 pub const ObjectHeader = struct {
     size: usize,
     type: ObjectType,
+    delta: ?Delta,
+
+    const Delta = union(enum) {
+        offset: usize,
+        ref: [20]u8,
+    };
 };
