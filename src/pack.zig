@@ -67,6 +67,32 @@ pub const Pack = struct {
     pub fn iterator(self: *Pack) !ObjectIterator {
         return try ObjectIterator.init(self);
     }
+
+    pub fn validate(self: *Pack) !void {
+        try self.file.seekTo(0);
+        const reader = self.file.reader();
+
+        var hasher = std.crypto.hash.Sha1.init(.{});
+        const writer = hasher.writer();
+
+        const file_length = try self.file.getEndPos();
+        const length_without_hash = file_length - 20;
+
+        var bytes_written: usize = 0;
+        var buffer: [4096]u8 = undefined;
+        while (bytes_written < length_without_hash) {
+            const bytes_remaining = length_without_hash - bytes_written;
+            const to_read = if (bytes_remaining > 4096) 4096 else bytes_remaining;
+            const bytes_read = try reader.read(buffer[0..to_read]);
+            try writer.writeAll(buffer[0..bytes_read]);
+            bytes_written += bytes_read;
+        }
+        const hash = hasher.finalResult();
+        const footer_hash = try reader.readBytesNoEof(20);
+        if (!mem.eql(u8, &hash, &footer_hash)) {
+            return error.HashMismatch;
+        }
+    }
 };
 
 pub fn parseVariableLength(reader: anytype) !usize {

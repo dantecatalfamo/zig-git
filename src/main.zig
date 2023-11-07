@@ -365,6 +365,8 @@ pub fn main() !void {
 
             std.debug.print("{any}\n", .{ pack });
 
+            // try pack.validate();
+
             var iter = try pack.iterator();
             defer iter.deinit();
 
