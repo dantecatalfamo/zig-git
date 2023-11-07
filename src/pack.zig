@@ -52,26 +52,45 @@ pub const Pack = struct {
         const object_header = try parseObjectHeader(reader);
 
         // TODO get these to work
-        if (object_header.type == .ofs_delta or object_header.type == .ref_delta) {
-            std.debug.print("Cannot read {s} yet\n", .{ @tagName(object_header.type) });
-            std.debug.print("Size: {d}\n", .{ object_header.size });
-            if (object_header.type == .ofs_delta) {
+        switch (object_header.type) {
+            .ofs_delta => {
                 const base_offset = try parseVariableLength(reader);
-                std.debug.print("Base offset: {d}\n", .{ base_offset });
-            } else {
+                const deltas = try parseDeltaInstructions(self.allocator, object_header.size, reader);
+                return ObjectReader{
+                    .data = .{
+                        .delta = DeltaInstructions{
+                            .allocator = self.allocator,
+                            .deltas = deltas,
+                            .location = .{ .offset = base_offset },
+                        }
+                    },
+                    .header = object_header,
+                };
+            },
+            .ref_delta => {
                 const ref_object_name = try reader.readBytesNoEof(20);
-                std.debug.print("Ref object name: {s}\n", .{ std.fmt.fmtSliceHexLower(&ref_object_name) });
+                const deltas = try parseDeltaInstructions(self.allocator, object_header.size, reader);
+                return ObjectReader{
+                    .data = .{
+                        .delta = DeltaInstructions{
+                            .allocator = self.allocator,
+                            .deltas = deltas,
+                            .location = .{ .ref = ref_object_name },
+                        }
+                    },
+                    .header = object_header,
+                };
+            },
+            else => {
+                var decompressor = try std.compress.zlib.decompressStream(self.allocator, reader);
+                errdefer decompressor.deinit();
+
+                return ObjectReader{
+                    .data = .{ .decompressor = decompressor },
+                    .header = object_header,
+                };
             }
-            // return error.Unimplemented;
         }
-
-        var decompressor = try std.compress.zlib.decompressStream(self.allocator, reader);
-        errdefer decompressor.deinit();
-
-        return ObjectReader{
-            .decompressor = decompressor,
-            .header = object_header,
-        };
     }
 
     pub fn iterator(self: *Pack) !ObjectIterator {
@@ -79,32 +98,93 @@ pub const Pack = struct {
     }
 };
 
-pub fn parseDeltaInstructions(allocator: mem.Allocator, size: usize, reader: anytype) void {
-    _ = size;
+pub fn parseDeltaInstructions(allocator: mem.Allocator, size: usize, reader: anytype) ![]Delta {
     var decompressor = try std.compress.zlib.decompressStream(allocator, reader);
-    const decompressor_reader = decompressor.reader();
-    var deltas = std.ArrayList(Delta).init(allocator);
-    _ = deltas;
+    defer decompressor.deinit();
 
-    const first_byte = try reader.readByte();
-    const first_bit = first_byte >> 7;
-    const remainder_bits = first_byte & 0b01111111;
-    _ = remainder_bits;
-    if (first_bit == 1) {
-        // Copy
-        var offset: u32 = 0;
-        _ = offset;
-        var offset_size: u32 = 0;
-        _ = offset_size;
-    } else {
-        // Data
+    var counting = std.io.countingReader(decompressor.reader());
+    const counting_reader = counting.reader();
+
+    var deltas = std.ArrayList(Delta).init(allocator);
+    errdefer {
+        for (deltas.items) |delta| {
+            switch (delta) {
+                .data => |data| {
+                    allocator.free(data);
+                },
+                else => {},
+            }
+        }
+        deltas.deinit();
     }
-    _ = decompressor_reader;
+
+    while (counting.bytes_read < size) {
+        const first_byte = try reader.readByte();
+        const first_bit = first_byte >> 7;
+        const remainder_bits: u7 = @intCast(first_byte & 0b01111111);
+        if (first_bit == 1) {
+            // Copy
+            const copy_bits: DeltaCopyBits = @bitCast(remainder_bits);
+            var copy_offset: u32 = 0;
+            var copy_size: u32 = 0;
+            if (copy_bits.offset1) {
+                copy_offset += try counting_reader.readByte();
+            }
+            if (copy_bits.offset2) {
+                copy_offset += @as(u32, try counting_reader.readByte()) << 8;
+            }
+            if (copy_bits.offset3) {
+                copy_offset += @as(u32, try counting_reader.readByte()) << 16;
+            }
+            if (copy_bits.offset4) {
+                copy_offset += @as(u32, try counting_reader.readByte()) << 24;
+            }
+            if (copy_bits.size1) {
+                copy_size += try counting_reader.readByte();
+            }
+            if (copy_bits.size2) {
+                copy_size += @as(u32, try counting_reader.readByte()) << 8;
+            }
+            if (copy_bits.size3) {
+                copy_size += @as(u32, try counting_reader.readByte()) << 16;
+            }
+            try deltas.append(.{ .copy = .{ .offset = copy_offset, .size = copy_size } });
+        } else {
+            // Data
+            const data_size: u32 = remainder_bits;
+            var data = try allocator.alloc(u8, data_size);
+            errdefer allocator.free(data);
+
+            const read_bytes = try counting_reader.readAll(data);
+            if (read_bytes != data_size) {
+                return error.IncorrectPackDeltaDataSize;
+            }
+            try deltas.append(.{ .data = data });
+        }
+    }
+
+    return try deltas.toOwnedSlice();
 }
+
+const DeltaCopyBits = packed struct(u7) {
+    size3: bool,
+    size2: bool,
+    size1: bool,
+    offset4: bool,
+    offset3: bool,
+    offset2: bool,
+    offset1: bool,
+};
 
 pub const DeltaInstructions = struct {
     allocator: mem.Allocator,
     deltas: []Delta,
+    location: Location,
+
+    pub const Location = union(enum) {
+        ref: [20]u8,
+        offset: usize,
+    };
 
     pub fn deinit(self: DeltaInstructions) void {
         for (self.deltas) |delta| {
@@ -210,34 +290,48 @@ pub const ObjectIterator = struct {
         var object_reader_hash = try self.pack.readObjectAt(object_begin);
         defer object_reader_hash.deinit();
 
-        var hasher = std.crypto.hash.Sha1.init(.{});
-        const hasher_writer = hasher.writer();
-        var counting_writer = std.io.countingWriter(hasher_writer);
+        switch (object_reader_hash.header.type) {
+            .ofs_delta, .ref_delta => {
+                // Create fresh reader for caller
+                self.current_object_reader = try self.pack.readObjectAt(object_begin);
 
-        // FIXME This works for normal objects, we don't know how to
-        // handle deltas yet and this might need to change
-        //
-        // Create object header just like in loose object file
-        try hasher_writer.print("{s} {d}\x00", .{ @tagName(object_reader_hash.header.type), object_reader_hash.header.size });
+                return Entry{
+                    .object_name = [_]u8{0} ** 20,
+                    .object_reader = &self.current_object_reader.?,
+                };
+            },
+            else => {
+                var hasher = std.crypto.hash.Sha1.init(.{});
+                const hasher_writer = hasher.writer();
+                var counting_writer = std.io.countingWriter(hasher_writer);
 
-        var pump = std.fifo.LinearFifo(u8, .{ .Static = 4094 }).init();
-        try pump.pump(object_reader_hash.reader(), counting_writer.writer());
+                // FIXME This works for normal objects, we don't know how to
+                // handle deltas yet and this might need to change
+                //
+                // Create object header just like in loose object file
+                try hasher_writer.print("{s} {d}\x00", .{ @tagName(object_reader_hash.header.type), object_reader_hash.header.size });
 
-        self.current_end_pos = try self.pack.file.getPos();
+                var pump = std.fifo.LinearFifo(u8, .{ .Static = 4094 }).init();
+                try pump.pump(object_reader_hash.data.decompressor.reader(), counting_writer.writer());
 
-        if (counting_writer.bytes_written != object_reader_hash.header.size) {
-            return error.PackObjectSizeMismatch;
+                self.current_end_pos = try self.pack.file.getPos();
+
+
+                if (counting_writer.bytes_written != object_reader_hash.header.size) {
+                    return error.PackObjectSizeMismatch;
+                }
+
+                const object_name = hasher.finalResult();
+
+                // Create fresh reader for caller
+                self.current_object_reader = try self.pack.readObjectAt(object_begin);
+
+                return Entry{
+                    .object_name = object_name,
+                    .object_reader = &self.current_object_reader.?,
+                };
+            },
         }
-
-        const object_name = hasher.finalResult();
-
-        // Create fresh reader for caller
-        self.current_object_reader = try self.pack.readObjectAt(object_begin);
-
-        return Entry{
-            .object_name = object_name,
-            .object_reader = &self.current_object_reader.?,
-        };
     }
 
     pub fn reset(self: *ObjectIterator) !void {
@@ -272,19 +366,22 @@ pub const ObjectType = enum(u3) {
 };
 
 pub const ObjectReader = struct {
-    decompressor: Decompressor,
+    data: ObjectData,
     header: ObjectHeader,
+
+    const ObjectData = union(enum) {
+        decompressor: Decompressor,
+        delta: DeltaInstructions,
+    };
 
     const Decompressor = std.compress.zlib.DecompressStream(fs.File.Reader);
     const Reader = Decompressor.Reader;
-    const Self = @This();
-
-    pub fn reader(self: *ObjectReader) Reader {
-        return self.decompressor.reader();
-    }
 
     pub fn deinit(self: *ObjectReader) void {
-        self.decompressor.deinit();
+        switch (self.data) {
+            .decompressor => |*rd| rd.deinit(),
+            .delta => |dlt| dlt.deinit(),
+        }
     }
 };
 
