@@ -380,6 +380,8 @@ pub fn main() !void {
                 return;
             };
 
+            const pack_search = args.next();
+
             const repo_path = try findRepoRoot(allocator);
             defer allocator.free(repo_path);
 
@@ -397,6 +399,13 @@ pub fn main() !void {
 
             const pack_index = try PackIndex.init(pack_index_file);
             std.debug.print("{any}\n", .{pack_index});
+
+            if (pack_search) |search| {
+                const name = try helpers.hexDigestToObjectName(search);
+                const thing = try pack_index.find(name);
+                if (thing) |thong|
+                    std.debug.print("{d}\n", .{thong});
+            }
         },
         .log => {
             const repo_path = try findRepoRoot(allocator);

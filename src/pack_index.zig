@@ -58,9 +58,9 @@ pub const PackIndex = struct {
                 return halfway;
             }
             if (mem.lessThan(u8, &object_name, &halfway_object_name)) {
-                top = halfway;
+                top = halfway - 1;
             } else {
-                bottom = halfway;
+                bottom = halfway + 1;
             }
         }
         const last_object_name = try self.version2ObjectNameAtIndex(top);
@@ -82,7 +82,7 @@ pub const PackIndex = struct {
     }
 
     pub fn version2OffsetAtIndex(self: PackIndex, index: usize) !u64 {
-        const total_entries = self.fanout_table[256];
+        const total_entries = self.fanout_table[255];
         if (index > total_entries) {
             return error.IndexOutOfBounds;
         }
