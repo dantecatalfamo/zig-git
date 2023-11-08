@@ -210,6 +210,7 @@ pub const ObjectIterator = struct {
         self.current_object_reader = try self.pack.readObjectAt(object_begin);
 
         return Entry{
+            .offset = object_begin,
             .object_name = object_name,
             .object_reader = &self.current_object_reader.?,
         };
@@ -226,6 +227,7 @@ pub const ObjectIterator = struct {
     }
 
     pub const Entry = struct {
+        offset: usize,
         object_name: [20]u8,
         object_reader: *ObjectReader,
     };

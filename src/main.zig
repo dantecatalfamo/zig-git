@@ -371,7 +371,7 @@ pub fn main() !void {
             defer iter.deinit();
 
             while (try iter.next()) |entry| {
-                std.debug.print("{s}: {any}\n", .{ std.fmt.fmtSliceHexLower(&entry.object_name), entry.object_reader.header });
+                std.debug.print("{s} ({d}): {any}\n", .{ std.fmt.fmtSliceHexLower(&entry.object_name), entry.offset, entry.object_reader.header });
             }
         },
         .@"read-pack-index" => {
@@ -402,13 +402,11 @@ pub fn main() !void {
 
             const pack_index = try PackIndex.init(pack_index_file);
 
-            if (pack_search) |search| {
-                const name = try helpers.hexDigestToObjectName(search);
-                if (try pack_index.find(name)) |offset| {
-                    std.debug.print("offset: {d}\n", .{offset});
-                } else {
-                    std.debug.print("offset not found\n", .{});
-                }
+            const name = try helpers.hexDigestToObjectName(pack_search);
+            if (try pack_index.find(name)) |offset| {
+                std.debug.print("offset: {d}\n", .{offset});
+            } else {
+                std.debug.print("offset not found\n", .{});
             }
         },
         .log => {
