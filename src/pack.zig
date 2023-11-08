@@ -5,11 +5,18 @@ const mem = std.mem;
 const os = std.os;
 const testing = std.testing;
 
+const pack_index_zig = @import("pack_index.zig");
+
+pub fn packObjectReader(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !PackObjectReader {
+    const search_result = try pack_index_zig.searchPackIndicies(allocator, git_dir_path, object_name);
+    return try readObjectFromPack(allocator, git_dir_path, search_result.pack, search_result.offset);
+}
+
 pub fn readObjectFromPack(allocator: mem.Allocator, git_dir_path: []const u8, pack_name: [20]u8, offset: u64) !PackObjectReader {
-    const pack_file_name = std.fmt.allocPrint(allocator, "pack-{s}.pack", .{ std.fmt.fmtSliceHexLower(pack_name) });
+    const pack_file_name = try std.fmt.allocPrint(allocator, "pack-{s}.pack", .{ std.fmt.fmtSliceHexLower(&pack_name) });
     defer allocator.free(pack_file_name);
 
-    const pack_file_path = fs.path.join(allocator, &.{ git_dir_path, "objects", "pack", pack_file_name });
+    const pack_file_path = try fs.path.join(allocator, &.{ git_dir_path, "objects", "pack", pack_file_name });
     defer allocator.free(pack_file_path);
 
     var pack = try Pack.init(allocator, pack_file_path);

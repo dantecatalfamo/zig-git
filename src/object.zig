@@ -4,6 +4,8 @@ const mem = std.mem;
 const debug = std.debug;
 const testing = std.testing;
 
+const pack_zig = @import("pack.zig");
+
 /// Calculate the object name of a file
 pub fn hashFile(file: fs.File) ![20]u8 {
     var hash_buffer: [20]u8 = undefined;
@@ -67,11 +69,11 @@ pub fn saveObject(allocator: mem.Allocator, git_dir_path: []const u8, data: []co
 }
 
 /// Returns a reader for an object's data
-pub fn objectReader(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !ObjectReader {
-    return ObjectReader.init(allocator, git_dir_path, object_name);
+pub fn looseObjectReader(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !?LooseObjectReader {
+    return LooseObjectReader.init(allocator, git_dir_path, object_name);
 }
 
-pub const ObjectReader = struct {
+pub const LooseObjectReader = struct {
     decompressor: Decompressor,
     file: fs.File,
     header: ObjectHeader,
@@ -84,14 +86,17 @@ pub const ObjectReader = struct {
         return self.decompressor.reader();
     }
 
-    pub fn init(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !ObjectReader {
+    pub fn init(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !?LooseObjectReader {
         var hex_buffer: [40]u8 = undefined;
         const hex_digest = try std.fmt.bufPrint(&hex_buffer, "{s}", .{ std.fmt.fmtSliceHexLower(&object_name) });
 
         const path = try fs.path.join(allocator, &.{ git_dir_path, "objects", hex_digest[0..2], hex_digest[2..] });
         defer allocator.free(path);
 
-        const file = try fs.cwd().openFile(path, .{});
+        const file = fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => return err,
+        };
 
         var decompressor = try std.compress.zlib.decompressStream(allocator, file.reader());
         const decompressor_reader = decompressor.reader();
@@ -127,15 +132,38 @@ pub const ObjectReader = struct {
 
 /// Writes the data from an object to a writer
 pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8, writer: anytype) !ObjectHeader {
-    var object_reader = try objectReader(allocator, git_dir_path, object_name);
-    defer object_reader.deinit();
-
-    const reader = object_reader.reader();
-
     var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
+
+    var loose_object_reader = try looseObjectReader(allocator, git_dir_path, object_name);
+    if (loose_object_reader) |*object_reader| {
+        defer object_reader.deinit();
+
+        const reader = object_reader.reader();
+
+        try fifo.pump(reader, writer);
+
+        return object_reader.header;
+    }
+
+    var pack_reader = try pack_zig.packObjectReader(allocator, git_dir_path, object_name);
+    defer pack_reader.deinit();
+
+    const object_type: ObjectType = switch (pack_reader.object_reader.header.type) {
+        .commit => .commit,
+        .tree => .tree,
+        .blob => .blob,
+        .tag => .tag,
+        // TODO We still need to resolve deltas
+        else => return error.Unimplemented,
+    };
+
+    var reader = pack_reader.reader();
     try fifo.pump(reader, writer);
 
-    return object_reader.header;
+    return ObjectHeader{
+        .type = object_type,
+        .size = pack_reader.object_reader.header.size,
+    };
 }
 
 pub const ObjectHeader = struct {
