@@ -91,15 +91,19 @@ pub const PackIndex = struct {
     pub fn version2FindObjectIndex(self: PackIndex, object_name: [20]u8) !?usize {
         var bottom: u32 = 0;
         var top: u32 = self.fanout_table[object_name[0]];
-        while (top != bottom) {
+        while (top > bottom) {
             const halfway: u32 = ((top - bottom) / 2) + bottom;
             const halfway_object_name = try self.version2ObjectNameAtIndex(halfway);
             if (mem.eql(u8, &object_name, &halfway_object_name)) {
                 return halfway;
             }
             if (mem.lessThan(u8, &object_name, &halfway_object_name)) {
+                if (halfway == 0)
+                    break;
                 top = halfway - 1;
             } else {
+                if (bottom == self.fanout_table[object_name[0]])
+                    break;
                 bottom = halfway + 1;
             }
         }
