@@ -5,6 +5,38 @@ const mem = std.mem;
 const os = std.os;
 const testing = std.testing;
 
+pub fn readObjectFromPack(allocator: mem.Allocator, git_dir_path: []const u8, pack_name: [20]u8, offset: u64) !PackObjectReader {
+    const pack_file_name = std.fmt.allocPrint(allocator, "pack-{s}.pack", .{ std.fmt.fmtSliceHexLower(pack_name) });
+    defer allocator.free(pack_file_name);
+
+    const pack_file_path = fs.path.join(allocator, &.{ git_dir_path, "objects", "pack", pack_file_name });
+    defer allocator.free(pack_file_path);
+
+    var pack = try Pack.init(allocator, pack_file_path);
+    errdefer pack.deinit();
+
+    return PackObjectReader{
+        .pack = pack,
+        .object_reader = try pack.readObjectAt(offset),
+    };
+}
+
+pub const PackObjectReader = struct {
+    pack: *Pack,
+    object_reader: ObjectReader,
+
+    const Reader = ObjectReader.Reader;
+
+    pub fn reader(self: *PackObjectReader) Reader {
+        return self.object_reader.reader();
+    }
+
+    pub fn deinit(self: *PackObjectReader) void {
+        self.object_reader.deinit();
+        self.pack.deinit();
+    }
+};
+
 pub const Pack = struct {
     allocator: mem.Allocator,
     file: fs.File,
@@ -254,8 +286,8 @@ pub const ObjectReader = struct {
     decompressor: Decompressor,
     header: ObjectHeader,
 
-    const Decompressor = std.compress.zlib.DecompressStream(fs.File.Reader);
-    const Reader = Decompressor.Reader;
+    pub const Decompressor = std.compress.zlib.DecompressStream(fs.File.Reader);
+    pub const Reader = Decompressor.Reader;
     const Self = @This();
 
     pub fn reader(self: *ObjectReader) Reader {
