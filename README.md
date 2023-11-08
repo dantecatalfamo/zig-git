@@ -6,7 +6,7 @@ Still very much a work in progress. Some commands are redundant and some will ge
 
 This project is primarily for learning purposes and not meant to be a replacement for something like libgit2.
 
-It doesn't support packed objects yet.
+It doesn't support pack deltas yet.
 
 ## Command
 
