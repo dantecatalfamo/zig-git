@@ -357,10 +357,7 @@ pub fn main() !void {
             const pack_path = try fs.path.join(allocator, &.{ git_dir_path, "objects", "pack", packfile_name });
             defer allocator.free(pack_path);
 
-            const pack_file = try fs.cwd().openFile(pack_path, .{});
-            defer pack_file.close();
-
-            const pack = try Pack.init(allocator, pack_file);
+            const pack = try Pack.init(allocator, pack_path);
             defer pack.deinit();
 
             std.debug.print("{any}\n", .{ pack });

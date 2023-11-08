@@ -10,7 +10,8 @@ pub const Pack = struct {
     file: fs.File,
     header: Header,
 
-    pub fn init(allocator: mem.Allocator, file: fs.File) !*Pack {
+    pub fn init(allocator: mem.Allocator, path: []const u8) !*Pack {
+        const file = try fs.cwd().openFile(path, .{});
         try file.seekTo(0);
         const reader = file.reader();
         const signature = try reader.readBytesNoEof(4);
@@ -40,6 +41,7 @@ pub const Pack = struct {
     }
 
     pub fn deinit(self: *Pack) void {
+        self.file.close();
         self.allocator.destroy(self);
     }
 
