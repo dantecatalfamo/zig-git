@@ -7,6 +7,7 @@ const testing = std.testing;
 
 const helpers = @import("helpers.zig");
 const index_zig = @import("index.zig");
+const IndexEntry = index_zig.Index.Entry;
 const readIndex = index_zig.readIndex;
 const object_zig = @import("object.zig");
 const repoToGitDir = helpers.repoToGitDir;
@@ -28,9 +29,7 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
     errdefer status_diff.deinit();
 
     var path_buffer: [fs.MAX_PATH_BYTES]u8 = undefined;
-    // TODO Look at file stats to tell if it's been modified without
-    // hashing first to avoid reading every file.
-    //
+
     // Checking for removed, modified, or unmodified files
     for (index.entries.items) |entry| {
         if (entry.mode.object_type != .regular_file) {
@@ -47,8 +46,14 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
             else => return err,
         };
         defer file.close();
-        const file_hash = try object_zig.hashFile(file);
+
+        // If the file metadata isn't changed, assume the file isn't
+        // for speed
+        if (!try fileStatChangedFromEntry(file, entry)) {
+            continue;
+        }
         const stat = try file.stat();
+        const file_hash = try object_zig.hashFile(file);
         if (!mem.eql(u8, &file_hash, &entry.object_name) or stat.mode != @as(u32, @bitCast(entry.mode))) {
             try status_diff.entries.append(.{ .path = try allocator.dupe(u8, entry.path), .status = .modified, .object_name = file_hash });
         }
@@ -141,6 +146,21 @@ pub fn repoStatus(allocator: mem.Allocator, repo_path: []const u8) !*StatusDiff 
 }
 
 const ObjectDetails = struct { object_name: [20]u8, mode: index_zig.Index.Mode };
+
+pub fn fileStatChangedFromEntry(file: fs.File, entry: IndexEntry) !bool {
+    const stat = try os.fstat(file.handle);
+    const ctime = stat.ctime();
+    const mtime = stat.mtime();
+    if (ctime.tv_sec != entry.ctime_s) return true;
+    if (ctime.tv_nsec != entry.ctime_n) return true;
+    if (mtime.tv_sec != entry.mtime_s) return true;
+    if (mtime.tv_nsec != entry.mtime_n) return true;
+    if (stat.ino != entry.ino) return true;
+    if (stat.dev != entry.dev) return true;
+    if (stat.mode != @as(u32, @bitCast(entry.mode))) return true;
+    if (stat.size != entry.file_size) return true;
+    return false;
+}
 
 pub const StatusDiff = struct {
     entries: EntryList,
