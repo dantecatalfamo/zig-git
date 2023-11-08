@@ -20,6 +20,7 @@ The `zig-git` command currently supports the following subcommands:
 * `init [directory]` - Create a new git repository
 * `log` - List commits
 * `read-commit <hash>` - Parse and display a commit
+* `read-object <hash>` - Dump the decompressed contents of an object to stdout
 * `read-pack <id>` - Parse a pack file and iterate over its contents
 * `read-pack-index <id> <hash>` - Search a pack file index for the offset of an object with a hash in a pack file
 * `read-ref [ref]` - Display a ref and what it points to, or all refs if no argument is given
