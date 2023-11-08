@@ -247,6 +247,23 @@ pub fn main() !void {
                 std.debug.print("{s}\n", .{ ref });
             }
         },
+        .@"read-object" => {
+            const blob_digest = args.next() orelse {
+                std.debug.print("No blob object name specified\n", .{});
+                return;
+            };
+
+            const object_name = try hexDigestToObjectName(blob_digest);
+
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            const stdout = std.io.getStdOut().writer();
+            _ = try loadObject(allocator, git_dir_path, object_name, stdout);
+        },
         .@"read-tree" => {
             const tree_hash_digest = args.next() orelse {
                 std.debug.print("No tree object name specified\n", .{});
@@ -583,6 +600,7 @@ const SubCommands = enum {
     init,
     log,
     @"read-commit",
+    @"read-object",
     @"read-pack",
     @"read-pack-index",
     @"read-ref",
