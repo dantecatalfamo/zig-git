@@ -380,7 +380,10 @@ pub fn main() !void {
                 return;
             };
 
-            const pack_search = args.next();
+            const pack_search = args.next() orelse {
+                std.debug.print("No search name\n", .{});
+                return;
+            };
 
             const repo_path = try findRepoRoot(allocator);
             defer allocator.free(repo_path);
@@ -398,13 +401,14 @@ pub fn main() !void {
             defer pack_index_file.close();
 
             const pack_index = try PackIndex.init(pack_index_file);
-            std.debug.print("{any}\n", .{pack_index});
 
             if (pack_search) |search| {
                 const name = try helpers.hexDigestToObjectName(search);
-                const thing = try pack_index.find(name);
-                if (thing) |thong|
-                    std.debug.print("{d}\n", .{thong});
+                if (try pack_index.find(name)) |offset| {
+                    std.debug.print("offset: {d}\n", .{offset});
+                } else {
+                    std.debug.print("offset not found\n", .{});
+                }
             }
         },
         .log => {

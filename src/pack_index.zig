@@ -24,7 +24,6 @@ pub const PackIndex = struct {
             version = 1;
             fanout[0] = std.mem.readIntBig(u32, &magic_number);
         }
-        std.debug.print("Version {d} pack\n", .{ version });
 
         for (1..256) |i| {
             fanout[i] = try reader.readIntBig(u32);
