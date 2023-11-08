@@ -5,12 +5,49 @@ const mem = std.mem;
 const os = std.os;
 const testing = std.testing;
 
+const helpers = @import("helpers.zig");
+
+pub fn searchPackIndicies(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !PackIndexResult {
+    const pack_dir_path = try fs.path.join(allocator, &.{ git_dir_path, "objects", "pack" });
+    defer allocator.free(pack_dir_path);
+
+    const pack_dir = try fs.cwd().openIterableDir(pack_dir_path, .{});
+    var pack_dir_iter = pack_dir.iterate();
+    while (try pack_dir_iter.next()) |dir_entry| {
+        if (mem.endsWith(u8, dir_entry.name, ".idx")) {
+            const pack_index_path = try fs.path.join(allocator, &.{ pack_dir_path, dir_entry.name });
+            defer allocator.free(pack_index_path);
+
+            var pack_index = try PackIndex.init(pack_index_path);
+            defer pack_index.deinit();
+
+            // Remove `pack-` and `.idx`
+            const pack_name = try helpers.hexDigestToObjectName(dir_entry.name[5..45]);
+
+            if (try pack_index.find(object_name)) |offset| {
+                return PackIndexResult{
+                    .pack = pack_name,
+                    .offset = offset,
+                };
+            }
+        }
+    }
+
+    return error.ObjectNotFound;
+}
+
+pub const PackIndexResult = struct {
+    pack: [20]u8,
+    offset: u64,
+};
+
 pub const PackIndex = struct {
     file: fs.File,
     version: u32,
     fanout_table: [256]u32,
 
-    pub fn init(file: fs.File) !PackIndex {
+    pub fn init(path: []const u8) !PackIndex {
+        const file = try fs.cwd().openFile(path, .{});
         try file.seekTo(0);
         const reader = file.reader();
         var fanout: [256]u32 = undefined;
@@ -34,6 +71,10 @@ pub const PackIndex = struct {
             .version = version,
             .fanout_table = fanout,
         };
+    }
+
+    pub fn deinit(self: PackIndex) void {
+        self.file.close();
     }
 
     pub fn find(self: PackIndex, object_name: [20]u8) !?usize {

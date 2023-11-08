@@ -397,10 +397,8 @@ pub fn main() !void {
             const pack_path = try fs.path.join(allocator, &.{ git_dir_path, "objects", "pack", index_file_name });
             defer allocator.free(pack_path);
 
-            const pack_index_file = try fs.cwd().openFile(pack_path, .{});
-            defer pack_index_file.close();
-
-            const pack_index = try PackIndex.init(pack_index_file);
+            const pack_index = try PackIndex.init(pack_path);
+            defer pack_index.deinit();
 
             const name = try helpers.hexDigestToObjectName(pack_search);
             if (try pack_index.find(name)) |offset| {
@@ -436,6 +434,23 @@ pub fn main() !void {
                     commit = null;
                 }
             }
+        },
+        .@"search-pack" => {
+            const pack_search = args.next() orelse {
+                std.debug.print("No search name\n", .{});
+                return;
+            };
+
+            const object_name = try hexDigestToObjectName(pack_search);
+
+            const repo_path = try findRepoRoot(allocator);
+            defer allocator.free(repo_path);
+
+            const git_dir_path = try repoToGitDir(allocator, repo_path);
+            defer allocator.free(git_dir_path);
+
+            const result = try pack_index_zig.searchPackIndicies(allocator, git_dir_path, object_name);
+            std.debug.print("Pack: {s}, Offset: {d}\n", .{ std.fmt.fmtSliceHexLower(&result.pack), result.offset });
         },
         .status => {
             // TODO Give more useful status information
@@ -579,6 +594,7 @@ const SubCommands = enum {
     refs,
     rm,
     root,
+    @"search-pack",
     status,
     // TODO notes
 };
