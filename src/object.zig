@@ -154,7 +154,7 @@ pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_nam
         .blob => .blob,
         .tag => .tag,
         // TODO We still need to resolve deltas
-        else => return error.Unimplemented,
+        else => return error.DeltasUnimplemented,
     };
 
     var reader = pack_reader.reader();
