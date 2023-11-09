@@ -6,13 +6,16 @@ const os = std.os;
 const testing = std.testing;
 
 const pack_index_zig = @import("pack_index.zig");
+const helpers_zig = @import("helpers.zig");
+const parseVariableLength = helpers_zig.parseVariableLength;
 
-pub fn packObjectReader(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !PackObjectReader {
+
+pub fn packObjectReader(allocator: mem.Allocator, git_dir_path: []const u8, object_name: [20]u8) !*PackObjectReader {
     const search_result = try pack_index_zig.searchPackIndicies(allocator, git_dir_path, object_name);
     return try readObjectFromPack(allocator, git_dir_path, search_result.pack, search_result.offset);
 }
 
-pub fn readObjectFromPack(allocator: mem.Allocator, git_dir_path: []const u8, pack_name: [20]u8, offset: u64) !PackObjectReader {
+pub fn readObjectFromPack(allocator: mem.Allocator, git_dir_path: []const u8, pack_name: [20]u8, offset: u64) !*PackObjectReader {
     const pack_file_name = try std.fmt.allocPrint(allocator, "pack-{s}.pack", .{ std.fmt.fmtSliceHexLower(&pack_name) });
     defer allocator.free(pack_file_name);
 
@@ -22,17 +25,25 @@ pub fn readObjectFromPack(allocator: mem.Allocator, git_dir_path: []const u8, pa
     var pack = try Pack.init(allocator, pack_file_path);
     errdefer pack.deinit();
 
-    return PackObjectReader{
-        .pack = pack,
-        .object_reader = try pack.readObjectAt(offset),
-    };
+    return PackObjectReader.init(allocator, pack, offset);
 }
 
 pub const PackObjectReader = struct {
+    allocator: mem.Allocator,
     pack: *Pack,
     object_reader: ObjectReader,
 
     const Reader = ObjectReader.Reader;
+
+    pub fn init(allocator: mem.Allocator, pack: *Pack, offset: usize) !*PackObjectReader {
+        var pack_object_reader = try allocator.create(PackObjectReader);
+        pack_object_reader.* = PackObjectReader{
+            .allocator = allocator,
+            .pack = pack,
+            .object_reader = try pack.readObjectAt(offset),
+        };
+        return pack_object_reader;
+    }
 
     pub fn reader(self: *PackObjectReader) Reader {
         return self.object_reader.reader();
@@ -41,6 +52,7 @@ pub const PackObjectReader = struct {
     pub fn deinit(self: *PackObjectReader) void {
         self.object_reader.deinit();
         self.pack.deinit();
+        self.allocator.destroy(self);
     }
 };
 
@@ -136,24 +148,6 @@ pub const Pack = struct {
     }
 };
 
-pub fn parseVariableLength(reader: anytype) !usize {
-    var size: usize = 0;
-    var shift: u6 = 0;
-    var more = true;
-    while (more) {
-        var byte: VariableLengthByte = @bitCast(try reader.readByte());
-        size += @as(usize, byte.size) << shift;
-        shift += 7;
-        more = byte.more;
-    }
-    return size;
-}
-
-const VariableLengthByte = packed struct(u8) {
-    size: u7,
-    more: bool,
-};
-
 pub fn parseObjectHeader(reader: anytype) !ObjectHeader {
     var size: usize = 0;
     const first_byte = try reader.readByte();
@@ -187,7 +181,7 @@ pub fn parseObjectHeader(reader: anytype) !ObjectHeader {
 
 const ObjectFirstBit = packed struct(u8) {
     size: u4,
-    type: ObjectType,
+    type: PackObjectType,
     more: bool,
 };
 
@@ -280,7 +274,7 @@ pub const Header = struct {
     number_objects: u32,
 };
 
-pub const ObjectType = enum(u3) {
+pub const PackObjectType = enum(u3) {
     commit = 1,
     tree = 2,
     blob = 3,
@@ -309,7 +303,7 @@ pub const ObjectReader = struct {
 
 pub const ObjectHeader = struct {
     size: usize,
-    type: ObjectType,
+    type: PackObjectType,
     delta: ?Delta,
 
     const Delta = union(enum) {

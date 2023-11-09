@@ -5,6 +5,7 @@ const debug = std.debug;
 const testing = std.testing;
 
 const pack_zig = @import("pack.zig");
+const pack_delta_zig = @import("pack_delta.zig");
 
 /// Calculate the object name of a file
 pub fn hashFile(file: fs.File) ![20]u8 {
@@ -145,10 +146,18 @@ pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_nam
         return object_reader.header;
     }
 
-    var pack_reader = try pack_zig.packObjectReader(allocator, git_dir_path, object_name);
-    defer pack_reader.deinit();
+    var pack_object_reader = try pack_zig.packObjectReader(allocator, git_dir_path, object_name);
+    defer pack_object_reader.deinit();
 
-    const object_type: ObjectType = switch (pack_reader.object_reader.header.type) {
+    const pack_reader = pack_object_reader.reader();
+    const pack_object_type = pack_object_reader.object_reader.header.type;
+
+    if (pack_object_type == .ofs_delta or pack_object_type == .ref_delta) {
+        const deltas = try pack_delta_zig.parseDeltaInstructions(allocator, pack_object_reader.object_reader.header.size, pack_reader);
+        defer deltas.deinit();
+    }
+
+    const object_type: ObjectType = switch (pack_object_type) {
         .commit => .commit,
         .tree => .tree,
         .blob => .blob,
@@ -157,12 +166,11 @@ pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_nam
         else => return error.DeltasUnimplemented,
     };
 
-    var reader = pack_reader.reader();
-    try fifo.pump(reader, writer);
+    try fifo.pump(pack_reader, writer);
 
     return ObjectHeader{
         .type = object_type,
-        .size = pack_reader.object_reader.header.size,
+        .size = pack_object_reader.object_reader.header.size,
     };
 }
 
@@ -177,3 +185,7 @@ pub const ObjectType = enum {
     tree,
     tag,
 };
+
+// pub fn expandPackDelta(allocator: mem.Allocator, reader: anytype, writer: anytype) !void {
+
+// }

@@ -63,5 +63,23 @@ pub fn lessThanStrings(context: void, lhs: []const u8, rhs: []const u8) bool {
     return mem.lessThan(u8, lhs, rhs);
 }
 
+pub fn parseVariableLength(reader: anytype) !usize {
+    var size: usize = 0;
+    var shift: u6 = 0;
+    var more = true;
+    while (more) {
+        var byte: VariableLengthByte = @bitCast(try reader.readByte());
+        size += @as(usize, byte.size) << shift;
+        shift += 7;
+        more = byte.more;
+    }
+    return size;
+}
+
+const VariableLengthByte = packed struct(u8) {
+    size: u7,
+    more: bool,
+};
+
 pub const StringList = std.ArrayList([]const u8);
 pub const ObjectNameList = std.ArrayList([20]u8);
