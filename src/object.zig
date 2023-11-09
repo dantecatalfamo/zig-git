@@ -5,6 +5,7 @@ const debug = std.debug;
 const testing = std.testing;
 
 const pack_zig = @import("pack.zig");
+const pack_index_zig = @import("pack_index.zig");
 const pack_delta_zig = @import("pack_delta.zig");
 
 /// Calculate the object name of a file
@@ -152,25 +153,65 @@ pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_nam
     const pack_reader = pack_object_reader.reader();
     const pack_object_type = pack_object_reader.object_reader.header.type;
 
-    if (pack_object_type == .ofs_delta or pack_object_type == .ref_delta) {
-        const deltas = try pack_delta_zig.parseDeltaInstructions(allocator, pack_object_reader.object_reader.header.size, pack_reader);
-        defer deltas.deinit();
+    if (packObjectTypeToObjectType(pack_object_type)) |object_type| {
+        try fifo.pump(pack_reader, writer);
+
+        return ObjectHeader{
+            .type = object_type,
+            .size = pack_object_reader.object_reader.header.size,
+        };
     }
 
-    const object_type: ObjectType = switch (pack_object_type) {
+    const delta_instructions = try pack_delta_zig.parseDeltaInstructions(allocator, pack_object_reader.object_reader.header.size, pack_reader);
+    defer delta_instructions.deinit();
+
+    const base_object = try allocator.alloc(u8, delta_instructions.base_size);
+    defer allocator.free(base_object);
+
+    var base_object_stream = std.io.fixedBufferStream(base_object);
+
+    var delta_object_header: ObjectHeader = undefined;
+
+    if (pack_object_type == .ref_delta) {
+        delta_object_header = try loadObject(allocator, git_dir_path, pack_object_reader.object_reader.header.delta.?.ref, base_object_stream.writer());
+    } else {
+        var pack_offset_reader = try pack_object_reader.pack.readObjectAt(pack_object_reader.object_reader.offset);
+        defer pack_offset_reader.deinit();
+
+        if (packObjectTypeToObjectType(pack_offset_reader.header.type)) |object_type| {
+            delta_object_header = ObjectHeader{
+                .type = object_type,
+                .size = delta_instructions.expanded_size,
+            };
+        } else {
+            // TODO make it work
+            return error.RecursiveDelta;
+        }
+
+        try fifo.pump(pack_offset_reader.reader(), base_object_stream.writer());
+    }
+
+    for (delta_instructions.deltas) |delta| {
+        switch (delta) {
+            .copy => |copy| {
+                try writer.writeAll(base_object[copy.offset..copy.offset+copy.size]);
+            },
+            .data => |data| {
+                try writer.writeAll(data);
+            }
+        }
+    }
+
+    return delta_object_header;
+}
+
+pub fn packObjectTypeToObjectType(pack_object_type: pack_zig.PackObjectType) ?ObjectType {
+    return switch (pack_object_type) {
         .commit => .commit,
         .tree => .tree,
         .blob => .blob,
         .tag => .tag,
-        // TODO We still need to resolve deltas
-        else => return error.DeltasUnimplemented,
-    };
-
-    try fifo.pump(pack_reader, writer);
-
-    return ObjectHeader{
-        .type = object_type,
-        .size = pack_object_reader.object_reader.header.size,
+        else => null,
     };
 }
 
