@@ -7,6 +7,7 @@ const testing = std.testing;
 const pack_zig = @import("pack.zig");
 const pack_index_zig = @import("pack_index.zig");
 const pack_delta_zig = @import("pack_delta.zig");
+const DeltaInstructions = pack_delta_zig.DeltaInstructions;
 
 /// Calculate the object name of a file
 pub fn hashFile(file: fs.File) ![20]u8 {
@@ -148,7 +149,12 @@ pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_nam
     }
 
     var pack_object_reader = try pack_zig.packObjectReader(allocator, git_dir_path, object_name);
-    defer pack_object_reader.deinit();
+    var pack_object_reader_valid = true;
+    defer {
+        // This is a hack but it works
+        if (pack_object_reader_valid)
+            pack_object_reader.deinit();
+    }
 
     const pack_reader = pack_object_reader.reader();
     const pack_object_type = pack_object_reader.object_reader.header.type;
@@ -162,48 +168,110 @@ pub fn loadObject(allocator: mem.Allocator, git_dir_path: []const u8, object_nam
         };
     }
 
-    const delta_instructions = try pack_delta_zig.parseDeltaInstructions(allocator, pack_object_reader.object_reader.header.size, pack_reader);
-    defer delta_instructions.deinit();
+    var delta_stack = DeltaStack.init(allocator);
+    defer delta_stack.deinit();
 
-    const base_object = try allocator.alloc(u8, delta_instructions.base_size);
-    defer allocator.free(base_object);
+    const first_instructions = try pack_delta_zig.parseDeltaInstructions(allocator, pack_object_reader.object_reader.header.size, pack_reader);
+    try delta_stack.push(pack_object_reader.object_reader.header);
+    delta_stack.last().instructions = first_instructions;
 
-    var base_object_stream = std.io.fixedBufferStream(base_object);
+    // we gotta keep going down the stack until we reach a non-delta,
+    // then unwind the stack and apply the deltas...
+    while (delta_stack.last().header.delta) |ref_type| {
+        var instructions = delta_stack.last().instructions.?;
 
-    var delta_object_header: ObjectHeader = undefined;
-
-    if (pack_object_type == .ref_delta) {
-        delta_object_header = try loadObject(allocator, git_dir_path, pack_object_reader.object_reader.header.delta.?.ref, base_object_stream.writer());
-    } else {
-        var pack_offset_reader = try pack_object_reader.pack.readObjectAt(pack_object_reader.object_reader.offset);
-        defer pack_offset_reader.deinit();
-
-        if (packObjectTypeToObjectType(pack_offset_reader.header.type)) |object_type| {
-            delta_object_header = ObjectHeader{
-                .type = object_type,
-                .size = delta_instructions.expanded_size,
-            };
+        if (ref_type == .ref) {
+            std.debug.print("Ref delta: {s}\n", .{ std.fmt.fmtSliceHexLower(&ref_type.ref) });
+            pack_object_reader.deinit();
+            pack_object_reader_valid = false;
+            // I would be shocked if a pack ever referred to a loose object
+            pack_object_reader = try pack_zig.packObjectReader(allocator, git_dir_path, ref_type.ref);
+            pack_object_reader_valid = true;
         } else {
-            // TODO make it work
-            return error.RecursiveDelta;
+            const object_offset = pack_object_reader.object_reader.offset - ref_type.offset;
+            std.debug.print("Ofs delta: {d}, current: {d}\n", .{object_offset, pack_object_reader.object_reader.offset});
+            try pack_object_reader.setOffset(object_offset);
         }
 
-        try fifo.pump(pack_offset_reader.reader(), base_object_stream.writer());
-    }
+        const base_object_header = pack_object_reader.object_reader.header;
+        try delta_stack.push(base_object_header);
 
-    for (delta_instructions.deltas) |delta| {
-        switch (delta) {
-            .copy => |copy| {
-                try writer.writeAll(base_object[copy.offset..copy.offset+copy.size]);
-            },
-            .data => |data| {
-                try writer.writeAll(data);
-            }
+        if (packObjectTypeToObjectType(base_object_header.type) == null) {
+            // another delta
+            const base_object_buffer = try allocator.alloc(u8, instructions.base_size);
+            defer allocator.free(base_object_buffer);
+
+            var base_object_stream = std.io.fixedBufferStream(base_object_buffer);
+            try fifo.pump(pack_object_reader.reader(), base_object_stream.writer());
+
+            var new_instructions = try pack_delta_zig.parseDeltaInstructions(allocator, base_object_header.size, base_object_stream.reader());
+            delta_stack.last().instructions = new_instructions;
+        } else {
+            // finally base object
+            try fifo.pump(pack_object_reader.reader(), delta_stack.last().base_object.writer());
         }
     }
 
-    return delta_object_header;
+    // @panic("we made it");
+    // var buffer_stream = delta_stack.last().bufferStream();
+    // try fifo.pump(buffer_stream.reader(), writer);
+    return error.What;
 }
+
+pub const DeltaStack = struct {
+    stack: std.ArrayList(DeltaFrame),
+
+    pub fn init(allocator: mem.Allocator) DeltaStack {
+        return .{ .stack = std.ArrayList(DeltaFrame).init(allocator) };
+    }
+
+    pub fn last(self: DeltaStack) *DeltaFrame {
+        return &self.stack.items[self.stack.items.len-1];
+    }
+
+    pub fn second_last(self: DeltaStack) *DeltaFrame {
+        return &self.stack.items[self.stack.items.len-2];
+    }
+
+    pub fn count(self: DeltaStack) usize {
+        return self.stack.items.len;
+    }
+
+    pub fn push(self: *DeltaStack, header: pack_zig.ObjectHeader) !void {
+        try self.stack.append(.{
+            .instructions = null,
+            .base_object = std.ArrayList(u8).init(self.stack.allocator),
+            .header = header,
+        });
+    }
+
+    pub fn pop(self: *DeltaStack) void {
+        var last_frame = self.last();
+        if (last_frame.instructions) |instructions|
+            instructions.deinit();
+        last_frame.base_object.deinit();
+        _ = self.stack.pop();
+    }
+
+    pub fn deinit(self: *DeltaStack) void {
+        while (self.count() > 0) {
+            self.pop();
+        }
+        self.stack.deinit();
+    }
+};
+
+pub const DeltaFrame = struct {
+    instructions: ?DeltaInstructions,
+    base_object: std.ArrayList(u8),
+    header: pack_zig.ObjectHeader,
+
+    const BufferStream = std.io.FixedBufferStream([]const u8);
+
+    pub fn bufferStream(self: DeltaFrame) BufferStream {
+        return std.io.fixedBufferStream(self.expanded_object);
+    }
+};
 
 pub fn packObjectTypeToObjectType(pack_object_type: pack_zig.PackObjectType) ?ObjectType {
     return switch (pack_object_type) {
