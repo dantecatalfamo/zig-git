@@ -49,6 +49,12 @@ pub const PackObjectReader = struct {
         return self.object_reader.reader();
     }
 
+    pub fn setOffset(self: *PackObjectReader, offset: usize) !void {
+        // This could lead to bad state
+        self.object_reader.deinit();
+        self.object_reader = try self.pack.readObjectAt(offset);
+    }
+
     pub fn deinit(self: *PackObjectReader) void {
         self.object_reader.deinit();
         self.pack.deinit();
